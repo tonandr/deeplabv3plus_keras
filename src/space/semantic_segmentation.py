@@ -39,22 +39,20 @@ from tqdm import tqdm
 
 import tensorflow as tf
 
-from keras.models import Model, load_model
-from keras.layers import Input, Conv2D, Dropout, DepthwiseConv2D,\
+from tensorflow.keras.models import Model, load_model
+from tensorflow.keras.layers import Input, Conv2D, Dropout, DepthwiseConv2D,\
  Concatenate, Lambda, Activation, AveragePooling2D
-from keras.utils import multi_gpu_model
-from keras.utils.data_utils import Sequence
-import keras.backend as K
-from keras import optimizers
-from keras.applications import MobileNetV2
-from keras.utils import Sequence, GeneratorEnqueuer, OrderedEnqueuer
-from keras.engine.training_utils import iter_sequence_infinite
-from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint,\
-    LearningRateScheduler
-from keras.utils.generic_utils import CustomObjectScope
-from keras import initializers
-from keras import regularizers
-from keras.layers.normalization import BatchNormalization
+from tensorflow.keras.utils import multi_gpu_model
+import tensorflow.keras.backend as K
+from tensorflow.keras import optimizers
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.utils import Sequence, GeneratorEnqueuer, OrderedEnqueuer
+from tensorflow.python.keras.utils.data_utils import iter_sequence_infinite #?
+from tensorflow.keras.callbacks import ReduceLROnPlateau, ModelCheckpoint, LearningRateScheduler
+from tensorflow.keras.utils import CustomObjectScope
+from tensorflow.keras import initializers
+from tensorflow.keras import regularizers
+from tensorflow.keras.layers import BatchNormalization
 
 #os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 #os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
@@ -63,15 +61,6 @@ from keras.layers.normalization import BatchNormalization
 DEBUG = True
 MLFLOW_USAGE = False
 NUM_CLASSES = 21
-
-def mean_iou(y_true, y_pred): #?
-    y_pred_t = tf.cast(K.argmax(y_pred), tf.int64)
-    y_true_t = tf.cast(K.argmax(y_true), tf.int64)    
-    miou, up_opt = tf.metrics.mean_iou(y_true_t, y_pred_t, NUM_CLASSES) # Number of classes?
-    K.get_session().run(tf.local_variables_initializer())
-    with tf.control_dependencies([up_opt]):
-        miou = tf.identity(miou)
-    return K.mean(miou) #?
 
 def get_one_hot(inputs, num_classes):
     """Get one hot tensor.
@@ -386,7 +375,7 @@ class SemanticSegmentation(object):
                                         , beta_1=self.hps['beta_1']
                                         , beta_2=self.hps['beta_2']
                                         , decay=self.hps['decay']) 
-            with CustomObjectScope({'mean_iou': mean_iou}): 
+            with CustomObjectScope({}): 
                 if self.conf['multi_gpu']:
                     self.model = load_model(self.MODEL_PATH)
                     
@@ -394,7 +383,7 @@ class SemanticSegmentation(object):
                     self.parallel_model.compile(optimizer=opt, loss=self.model.losses, metrics=self.model.metrics)
                 else:
                     self.model = load_model(self.MODEL_PATH, compile=True)
-                    #self.model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=[mean_iou])
+                    #self.model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=[tf.keras.metrics.MeanIoU(num_classes=NUM_CLASSES)])
         else:
             # Design the semantic segmentation model.
             # Load mobilenetv2 as the base model.
@@ -404,7 +393,7 @@ class SemanticSegmentation(object):
             self.base.trainable = False
             for layer in self.base.layers: layer.trainable = False #?
             
-            self.base.name = 'base' 
+            self.base._init_set_name('base') 
             
             # Make the encoder-decoder model.
             self._make_encoder()
@@ -423,8 +412,10 @@ class SemanticSegmentation(object):
                                         , beta_2=self.hps['beta_2']
                                         , decay=self.hps['decay'])
             
-            self.model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=[mean_iou])
-            self.model.name = 'deeplabv3plus_mnv2'
+            self.model.compile(optimizer=opt
+                               , loss='categorical_crossentropy'
+                               , metrics=[tf.keras.metrics.MeanIoU(num_classes=NUM_CLASSES)])
+            self.model._init_set_name('deeplabv3plus_mnv2')
             
             if self.conf['multi_gpu']:
                 self.parallel_model = multi_gpu_model(self.model, gpus=self.conf['num_gpus'])
@@ -502,7 +493,7 @@ class SemanticSegmentation(object):
         output = Dropout(rate=self.nn_arch['dropout_rate'])(x3)
         
         self.encoder = Model(input_image, output)
-        self.encoder.name = 'encoder'
+        self.encoder._init_set_name('encoder')
         
     def _make_decoder(self):
         """Make decoder."""
@@ -533,7 +524,7 @@ class SemanticSegmentation(object):
         
         self.decoder = Model(inputs=[low_features, features], outputs=outputs)
         #self.decoder = Model(inputs=[features], outputs=outputs)
-        self.decoder.name = 'decoder'
+        self.decoder._init_set_name('decoder')
     
     def _refine_boundary(self, low_features, features):
         """Refine segmentation boundary.
@@ -638,18 +629,6 @@ class SemanticSegmentation(object):
         max_queue_size = 80
         workers = 4
         shuffle = False
-
-        # Create a mean iou symbolic computation part.
-        results_t = tf.placeholder(tf.int64, shape=(self.hps['batch_size']
-                                                    ,self.nn_arch['image_size'], self.nn_arch['image_size'], 1))
-        labels_t = tf.placeholder(tf.int64, shape=(self.hps['batch_size']
-                                                   ,self.nn_arch['image_size'], self.nn_arch['image_size'], 1))
-        
-        miou, up_opt = tf.metrics.mean_iou(results_t, labels_t, self.nn_arch['num_classes'])
-        K.get_session().run(tf.local_variables_initializer())
-        
-        with tf.control_dependencies([up_opt]):
-            miou = K.mean(tf.identity(miou))
                    
         # Check exception.
         if not isinstance(valGen, Sequence) and use_multiprocessing and workers > 1:
@@ -674,7 +653,7 @@ class SemanticSegmentation(object):
                 else:
                     output_generator = valGen
             
-            c_miou = 0.0
+            c_miou = tf.keras.metrics.MeanIoU(num_classes=NUM_CLASSES)
             pbar = tqdm(range(self.hps['step']))                                    
             for s_i in pbar: #?
                 images, labels = next(output_generator)
@@ -683,8 +662,8 @@ class SemanticSegmentation(object):
                 results = self.segment(images)
                 results[results > (self.nn_arch['num_classes'] - 1)] = 0
                                    
-                c_miou = K.get_session().run(miou, feed_dict={results_t: results, labels_t: labels})
-                pbar.set_description("Mean IOU: {}".format(c_miou))
+                c_miou.update_state(results, labels)
+                pbar.set_description("Mean IOU: {}".format(c_miou.result().numpy()))
                 
                 for i in range(self.hps['batch_size']):
                     plt.subplot(121); plt.imshow(np.squeeze(labels[i]))

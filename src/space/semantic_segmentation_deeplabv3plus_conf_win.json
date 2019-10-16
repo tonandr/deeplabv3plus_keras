@@ -1,7 +1,7 @@
 {
-	"mode" : "evaluate",
-	"raw_data_path" : "D:\\workspace\\ai-platform\\tasks\\computer-vision\\semantic-segmentation\\deeplabv3plus_keras\\resource",
-	"model_loading" : true,
+	"mode" : "train",
+	"raw_data_path" : "D:\\workspace\\deeplabv3plus_keras\\resource",
+	"model_loading" : false,
 	"multi_gpu" : false,
 	"num_gpus" : 4,
 	"hps" : {
@@ -9,7 +9,7 @@
 		"beta_1" : 0.5,
 		"beta_2" : 0.99,
 		"decay" : 0.0,
-		"epochs" : 344,
+		"epochs" : 1,
 		"batch_size" : 6,
 		"weight_decay": 0.00004,
 		"bn_momentum": 0.9,
@@ -24,7 +24,7 @@
 		"depth_multiplier": 1,
 		"conv_rate_multiplier" : 2,
 		"reduction_size": 256,
-		"dropout_rate": 0.9,
+		"dropout_rate": 0.5,
 		"concat_channels": 256,
 		"encoder_middle_conf": [
 			{"kernel": 3, "rate": [1, 6], "op": "conv", "input": -1}, 
