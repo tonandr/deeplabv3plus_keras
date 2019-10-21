@@ -14,7 +14,7 @@ setuptools.setup(
     url="https://github.com/tonandr/deeplabv3plus_keras",
     packages=setuptools.find_packages(exclude=['analysis', 'samples', 'resource']),
     install_requires=['tensorflow-gpu==2.0.0'
-                      , 'scipy=1.3.1'
+                      , 'scipy==1.3.1'
                       , 'pandas==0.25.1'
                       , 'scikit-image==0.15.0'
                       , 'opencv-contrib-python==4.1.1.26'
@@ -25,5 +25,5 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.7',
+    python_requires='>=3.6',
 )

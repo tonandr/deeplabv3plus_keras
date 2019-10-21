@@ -28,6 +28,7 @@ import time
 import platform
 import json
 import warnings
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -95,6 +96,7 @@ class SemanticSegmentation(object):
     """Keras Semantic segmentation model of DeeplabV3+"""
     
     # Constants.
+    #MODEL_PATH = 'semantic_segmentation_deeplabv3plus'
     MODEL_PATH = 'semantic_segmentation_deeplabv3plus.h5'
     #MODEL_PATH = 'semantic_segmentation_deeplabv3plus_is224_lr0_0001_ep344.h5'
 
@@ -382,7 +384,7 @@ class SemanticSegmentation(object):
                     self.parallel_model = multi_gpu_model(self.model, gpus=self.conf['num_gpus'])
                     self.parallel_model.compile(optimizer=opt, loss=self.model.losses, metrics=self.model.metrics)
                 else:
-                    self.model = load_model(self.MODEL_PATH, compile=True)
+                    self.model = load_model(self.MODEL_PATH)
                     #self.model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=[tf.keras.metrics.MeanIoU(num_classes=NUM_CLASSES)])
         else:
             # Design the semantic segmentation model.
@@ -607,8 +609,9 @@ class SemanticSegmentation(object):
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr])
 
-        print('Save the model.')            
-        self.model.save(self.MODEL_PATH)
+        print('Save the model.')
+        self.model.save(self.MODEL_PATH, save_format='h5')            
+        #self.model.save(self.MODEL_PATH, save_format='tf')
         
     def evaluate(self):
         """Evaluate.
@@ -619,7 +622,14 @@ class SemanticSegmentation(object):
             Scalar float.
         """
         assert hasattr(self, 'model')
-        
+
+        # Initialize the results directory
+        if not os.path.isdir(os.path.join(self.raw_data_path, 'results')):
+            os.mkdir(os.path.join(self.raw_data_path, 'results'))
+        else:
+            shutil.rmtree(os.path.join(self.raw_data_path, 'results'))
+            os.mkdir(os.path.join(self.raw_data_path, 'results'))
+
         valGen = self.TrainingSequencePascalVOC2012(self.raw_data_path
                                                     , self.hps
                                                     , self.nn_arch
@@ -665,6 +675,7 @@ class SemanticSegmentation(object):
                 c_miou.update_state(results, labels)
                 pbar.set_description("Mean IOU: {}".format(c_miou.result().numpy()))
                 
+                # Save result images.
                 for i in range(self.hps['batch_size']):
                     plt.subplot(121); plt.imshow(np.squeeze(labels[i]))
                     plt.subplot(122); plt.imshow(np.squeeze(results[i]))

@@ -1,7 +1,7 @@
 {
-	"mode" : "train",
+	"mode" : "evaluate",
 	"raw_data_path" : "D:\\workspace\\deeplabv3plus_keras\\resource",
-	"model_loading" : false,
+	"model_loading" : true,
 	"multi_gpu" : false,
 	"num_gpus" : 4,
 	"hps" : {
