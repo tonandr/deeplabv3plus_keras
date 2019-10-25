@@ -5,7 +5,7 @@ pip install tensorflow-gpu==2.0.0
 conda install cudnn
 git clone https://github.com/tonandr/deeplabv3plus_keras.git
 sudo apt install s3fs
-echo "AKIA5NKZQQOMGOVJII5J:xvfIw1WXKWGW4NZrkOefyw6XKpiBIX8pqj0hqH9E" > .passwd-s3fs
+echo "XXX:XXX" > .passwd-s3fs
 chmod 600 .passwd-s3fs
 cd deeplabv3plus_keras/
 mkdir resource_raw
