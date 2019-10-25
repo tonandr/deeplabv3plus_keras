@@ -1,6 +1,6 @@
 {
 	"mode" : "train",
-	"raw_data_path" : "/content/drive/deeplabv3plus_keras/resource",
+	"raw_data_path" : "/home/ubuntu/deeplabv3plus_keras/resource",
 	"model_loading" : false,
 	"multi_gpu" : false,
 	"num_gpus" : 4,
@@ -10,7 +10,7 @@
 		"beta_2" : 0.99,
 		"decay" : 0.0,
 		"epochs" : 400,
-		"batch_size" : 20,
+		"batch_size" : 30,
 		"weight_decay": 0.00004,
 		"bn_momentum": 0.9,
 		"bn_scale": true,

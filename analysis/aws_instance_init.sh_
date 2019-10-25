@@ -1,0 +1,14 @@
+source activate tensorflow_p36
+pip uninstall -y tensorflow
+pip install --upgrade pip
+pip install tensorflow-gpu==2.0.0
+conda install cudnn
+git clone https://github.com/tonandr/deeplabv3plus_keras.git
+sudo apt install s3fs
+echo "AKIA5NKZQQOMGOVJII5J:xvfIw1WXKWGW4NZrkOefyw6XKpiBIX8pqj0hqH9E" > .passwd-s3fs
+chmod 600 .passwd-s3fs
+cd deeplabv3plus_keras/
+mkdir resource_raw
+mkdir resource
+s3fs jangsik ./resource_raw -o umask=0022
+cp -r ./resource_raw/deeplabv3plus_keras/resource/pascal-voc-2012 ~/deeplabv3plus_keras/resource
