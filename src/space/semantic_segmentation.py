@@ -382,9 +382,11 @@ class SemanticSegmentation(object):
                     self.model = load_model(self.MODEL_PATH)
                     
                     self.parallel_model = multi_gpu_model(self.model, gpus=self.conf['num_gpus'])
-                    self.parallel_model.compile(optimizer=opt, loss=self.model.losses, metrics=self.model.metrics)
+                    self.parallel_model.compile(optimizer=opt
+                                                , loss=self.model.losses
+                                                , metrics=self.model.metrics)
                 else:
-                    self.model = load_model(self.MODEL_PATH)
+                    self.model = load_model(os.path.join(self.raw_data_path, self.MODEL_PATH))
                     #self.model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=[tf.keras.metrics.MeanIoU(num_classes=NUM_CLASSES)])
         else:
             # Design the semantic segmentation model.
@@ -415,13 +417,15 @@ class SemanticSegmentation(object):
                                         , decay=self.hps['decay'])
             
             self.model.compile(optimizer=opt
-                               , loss='categorical_crossentropy'
-                               , metrics=[tf.keras.metrics.MeanIoU(num_classes=NUM_CLASSES)])
+                               , loss='categorical_crossentropy')
+                               #, metrics=[tf.keras.metrics.MeanIoU(num_classes=NUM_CLASSES)])
             self.model._init_set_name('deeplabv3plus_mnv2')
             
             if self.conf['multi_gpu']:
                 self.parallel_model = multi_gpu_model(self.model, gpus=self.conf['num_gpus'])
-                self.parallel_model.compile(optimizer=opt, loss=self.model.losses)
+                self.parallel_model.compile(optimizer=opt
+                                            , loss=self.model.losses
+                                            , metrics=self.model.metrics)
             
     def _make_encoder(self):
         """Make encoder."""
@@ -610,8 +614,8 @@ class SemanticSegmentation(object):
                           , callbacks=[model_check_point, reduce_lr])
 
         print('Save the model.')
-        self.model.save(self.MODEL_PATH, save_format='h5')            
-        #self.model.save(self.MODEL_PATH, save_format='tf')
+        self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='h5')            
+        #self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='tf')
         
     def evaluate(self):
         """Evaluate.

@@ -10,7 +10,7 @@
 		"beta_2" : 0.99,
 		"decay" : 0.0,
 		"epochs" : 400,
-		"batch_size" : 30,
+		"batch_size" : 40,
 		"weight_decay": 0.00004,
 		"bn_momentum": 0.9,
 		"bn_scale": true,
