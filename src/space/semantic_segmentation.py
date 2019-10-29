@@ -459,7 +459,8 @@ class SemanticSegmentation(object):
                     x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)                
                 else:
                     # Split separable conv2d.
-                    x2 = SeparableConv2D(kernel_size=conf['kernel']
+                    x2 = SeparableConv2D(self.nn_arch['reduction_size'] #?
+                                        , conf['kernel']
                                         , depth_multiplier=1
                                         , dilation_rate=(conf['rate'][0] * self.nn_arch['conv_rate_multiplier']
                                                          , conf['rate'][1] * self.nn_arch['conv_rate_multiplier'])
