@@ -454,9 +454,9 @@ class SemanticSegmentation(object):
                                 , kernel_size=1
                                 , padding='same'
                                 , use_bias=False
-                                , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                                , activation='relu')(x2)
-                    x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)                
+                                , kernel_regularizer=regularizers.l2(self.hps['weight_decay']))(x2)
+                    x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)
+                    x2 = Activation('relu')(x2)                
                 else:
                     # Split separable conv2d.
                     x2 = SeparableConv2D(self.nn_arch['reduction_size'] #?
@@ -466,26 +466,26 @@ class SemanticSegmentation(object):
                                                          , conf['rate'][1] * self.nn_arch['conv_rate_multiplier'])
                                         , padding='same'
                                         , use_bias=False
-                                        , kernel_initializer=initializers.TruncatedNormal()
-                                        , activation='relu')(x2) # Right activation?
+                                        , kernel_initializer=initializers.TruncatedNormal())(x2)
                     x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)
+                    x2 = Activation('relu')(x2) 
                     x2 = Conv2D(self.nn_arch['reduction_size']
                                 , kernel_size=1
                                 , padding='same'
                                 , use_bias=False
                                 , kernel_initializer=initializers.TruncatedNormal()
-                                , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                                , activation='relu')(x2)
+                                , kernel_regularizer=regularizers.l2(self.hps['weight_decay']))(x2)
                     x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)
+                    x2 = Activation('relu')(x2) 
             elif conf['op'] == 'pyramid_pooling':
                 x2 = AveragePooling2D(pool_size=conf['kernel'], padding='valid')(x2)
                 x2 = Conv2D(self.nn_arch['reduction_size']
                             , kernel_size=1
                             , padding='same'
                             , use_bias=False
-                            , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                            , activation='relu')(x2)
+                            , kernel_regularizer=regularizers.l2(self.hps['weight_decay']))(x2)
                 x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)
+                x2 = Activation('relu')(x2) 
                 
                 target_size = conf['target_size_factor'] #?
                 x2 = Lambda(lambda x: K.resize_images(x
@@ -505,9 +505,9 @@ class SemanticSegmentation(object):
                     , kernel_size=1
                     , padding='same'
                     , use_bias=False
-                    , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                    , activation='relu')(x3)
+                    , kernel_regularizer=regularizers.l2(self.hps['weight_decay']))(x3)
         x3 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x3)
+        x3 = Activation('relu')(x3) 
         output = Dropout(rate=self.nn_arch['dropout_rate'])(x3)
         
         self.encoder = Model(input_image, output)
@@ -530,8 +530,7 @@ class SemanticSegmentation(object):
                    , kernel_size=3
                    , padding='same'
                    , use_bias=False
-                   , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                   , activation='linear')(x) # Kernel size?
+                   , kernel_regularizer=regularizers.l2(self.hps['weight_decay']))(x) # Kernel size?
         
         output_stride = self.nn_arch['output_stride']
         x = Lambda(lambda x: K.resize_images(x
