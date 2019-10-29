@@ -42,7 +42,7 @@ import tensorflow as tf
 
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input, Conv2D, Dropout, DepthwiseConv2D,\
- Concatenate, Lambda, Activation, AveragePooling2D
+ Concatenate, Lambda, Activation, AveragePooling2D, SeparableConv2D
 from tensorflow.keras.utils import multi_gpu_model
 import tensorflow.keras.backend as K
 from tensorflow.keras import optimizers
@@ -448,33 +448,41 @@ class SemanticSegmentation(object):
             else:
                 x2 = pooled_outputs[conf['input']]
             
-            if conf['op'] == 'conv':     
-                # Split separable conv2d.
-                x2 = DepthwiseConv2D(kernel_size=conf['kernel']
-                                    , depth_multiplier=self.nn_arch['depth_multiplier']
-                                    , dilation_rate=(conf['rate'][0] * self.nn_arch['conv_rate_multiplier']
-                                                     , conf['rate'][1] * self.nn_arch['conv_rate_multiplier'])
-                                    , padding='same'
-                                    , kernel_initializer=initializers.TruncatedNormal()
-                                    , bias_initializer=initializers.TruncatedNormal()
-                                    , activation='relu')(x2) # Right activation?
-                x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2) #?
-                x2 = Conv2D(self.nn_arch['reduction_size'], kernel_size=1, padding='same'
-                            , kernel_initializer=initializers.TruncatedNormal()
-                            , bias_initializer=initializers.TruncatedNormal()
-                            , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                            , bias_regularizer=regularizers.l2(self.hps['weight_decay'])
-                            , activation='relu')(x2)
-                x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)
-                
-                pooled_outputs.append(x2)
+            if conf['op'] == 'conv': 
+                if conf['kernel'] == 1:
+                    x2 = Conv2D(self.nn_arch['reduction_size']
+                                , kernel_size=1
+                                , padding='same'
+                                , use_bias=False
+                                , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
+                                , activation='relu')(x2)
+                    x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)                
+                else:
+                    # Split separable conv2d.
+                    x2 = SeparableConv2D(kernel_size=conf['kernel']
+                                        , depth_multiplier=1
+                                        , dilation_rate=(conf['rate'][0] * self.nn_arch['conv_rate_multiplier']
+                                                         , conf['rate'][1] * self.nn_arch['conv_rate_multiplier'])
+                                        , padding='same'
+                                        , use_bias=False
+                                        , kernel_initializer=initializers.TruncatedNormal()
+                                        , activation='relu')(x2) # Right activation?
+                    x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)
+                    x2 = Conv2D(self.nn_arch['reduction_size']
+                                , kernel_size=1
+                                , padding='same'
+                                , use_bias=False
+                                , kernel_initializer=initializers.TruncatedNormal()
+                                , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
+                                , activation='relu')(x2)
+                    x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)
             elif conf['op'] == 'pyramid_pooling':
-                x2 = AveragePooling2D(pool_size=conf['kernel'], padding='valid')(x2) #?
-                x2 = Conv2D(self.nn_arch['reduction_size'], kernel_size=1, padding='same'
-                            , kernel_initializer=initializers.TruncatedNormal()
-                            , bias_initializer=initializers.TruncatedNormal()
+                x2 = AveragePooling2D(pool_size=conf['kernel'], padding='valid')(x2)
+                x2 = Conv2D(self.nn_arch['reduction_size']
+                            , kernel_size=1
+                            , padding='same'
+                            , use_bias=False
                             , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                            , bias_regularizer=regularizers.l2(self.hps['weight_decay'])
                             , activation='relu')(x2)
                 x2 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x2)
                 
@@ -484,16 +492,19 @@ class SemanticSegmentation(object):
                                              , target_size[1]
                                              , "channels_last"
                                              , interpolation='bilinear'))(x2) #?
-                pooled_outputs.append(x2)
             else:
                 raise ValueError('Invalid operation.')
+            
+            pooled_outputs.append(x2)
                 
         # Concatenate pooled tensors.
         x3 = Concatenate(axis=-1)(pooled_outputs)
         x3 = Dropout(rate=self.nn_arch['dropout_rate'])(x3)
-        x3 = Conv2D(self.nn_arch['concat_channels'], kernel_size=1, padding='same'
+        x3 = Conv2D(self.nn_arch['concat_channels']
+                    , kernel_size=1
+                    , padding='same'
+                    , use_bias=False
                     , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                    , bias_regularizer=regularizers.l2(self.hps['weight_decay'])
                     , activation='relu')(x3)
         x3 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x3)
         output = Dropout(rate=self.nn_arch['dropout_rate'])(x3)
@@ -507,18 +518,19 @@ class SemanticSegmentation(object):
         
         inputs = self.encoder.outputs
         features = Input(shape=K.int_shape(inputs[0])[1:])
-        #x = features 
+        x = features 
         
         # Refine boundary.
-        low_features = Input(shape=K.int_shape(self.encoder.inputs[0])[1:])
-        x = self._refine_boundary(low_features, features)
+        #low_features = Input(shape=K.int_shape(self.encoder.inputs[0])[1:])
+        #x = self._refine_boundary(low_features, features)
         
         # Upsampling & softmax.
-        x = Conv2D(self.nn_arch['num_classes'], kernel_size=3, padding='same'
-                        , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                        , bias_regularizer=regularizers.l2(self.hps['weight_decay'])
-                        , activation='relu')(x) # Kernel size?
-        x = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x)
+        x = Conv2D(self.nn_arch['num_classes']
+                   , kernel_size=3
+                   , padding='same'
+                   , use_bias=False
+                   , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
+                   , activation='linear')(x) # Kernel size?
         
         output_stride = self.nn_arch['output_stride']
         x = Lambda(lambda x: K.resize_images(x
@@ -528,8 +540,8 @@ class SemanticSegmentation(object):
                                              , interpolation='bilinear'))(x) #?
         outputs = Activation('softmax')(x)
         
-        self.decoder = Model(inputs=[low_features, features], outputs=outputs)
-        #self.decoder = Model(inputs=[features], outputs=outputs)
+        #self.decoder = Model(inputs=[low_features, features], outputs=outputs)
+        self.decoder = Model(inputs=[features], outputs=outputs)
         self.decoder._init_set_name('decoder')
     
     def _refine_boundary(self, low_features, features):
@@ -548,9 +560,11 @@ class SemanticSegmentation(object):
             Tensor
         """
         low_features = self.base(low_features)
-        low_features = Conv2D(48, kernel_size=1, padding='same'
+        low_features = Conv2D(48
+                        , kernel_size=1
+                        , padding='same'
+                        , use_bias=False
                         , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                        , bias_regularizer=regularizers.l2(self.hps['weight_decay'])
                         , activation='relu')(low_features)
         low_features = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(low_features)
         
@@ -581,7 +595,7 @@ class SemanticSegmentation(object):
                                       , patience=5
                                       , min_lr=0.00000001
                                       , verbose=1)
-        model_check_point = ModelCheckpoint(self.MODEL_PATH
+        model_check_point = ModelCheckpoint(os.path.join(self.raw_data_path, self.MODEL_PATH)
                                             , monitor='loss'
                                             , verbose=1
                                             , save_best_only=True)
@@ -608,8 +622,8 @@ class SemanticSegmentation(object):
                           , steps_per_epoch=self.hps['step']                  
                           , epochs=self.hps['epochs']
                           , verbose=1
-                          , max_queue_size=200
-                          , workers=4
+                          , max_queue_size=100
+                          , workers=1
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr])
 
