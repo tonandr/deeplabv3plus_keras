@@ -405,8 +405,8 @@ class SemanticSegmentation(object):
             
             inputs = self.encoder.inputs
             features = self.encoder(inputs)
-            outputs = self.decoder([inputs[0], features])
-            #outputs = self.decoder(features)
+            #outputs = self.decoder([inputs[0], features])
+            outputs = self.decoder(features)
             
             self.model = Model(inputs, outputs)
             
@@ -535,8 +535,8 @@ class SemanticSegmentation(object):
         
         output_stride = self.nn_arch['output_stride']
         x = Lambda(lambda x: K.resize_images(x
-                                             , output_stride / 4
-                                             , output_stride / 4
+                                             , output_stride #4
+                                             , output_stride #4
                                              , "channels_last"
                                              , interpolation='bilinear'))(x) #?
         outputs = Activation('softmax')(x)
