@@ -56,8 +56,7 @@ from tensorflow.keras import regularizers
 from tensorflow.keras.layers import BatchNormalization
 from tensorflow.keras.metrics import MeanIoU
 
-#from ku.metrics_ext import MeanIoUExt
-#from ku.metrics_ext.metrics import MeanIoUExt
+from ku.metrics_ext import MeanIoUExt
 #from ku.callbacks_ext.tensorboard_ext import TensorBoardExt
 
 #os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
@@ -384,7 +383,7 @@ class SemanticSegmentation(object):
                                         , beta_1=self.hps['beta_1']
                                         , beta_2=self.hps['beta_2']
                                         , decay=self.hps['decay']) 
-            with CustomObjectScope({}): #'MeanIoUExt': MeanIoUExt}): 
+            with CustomObjectScope({'MeanIoUExt': MeanIoUExt}): 
                 if self.conf['multi_gpu']:
                     self.model = load_model(self.MODEL_PATH)
                     
@@ -424,8 +423,8 @@ class SemanticSegmentation(object):
                                         , decay=self.hps['decay'])
             
             self.model.compile(optimizer=opt
-                               , loss='categorical_crossentropy')
-                               #, metrics=[MeanIoUExt(num_classes=NUM_CLASSES)])
+                               , loss='categorical_crossentropy'
+                               , metrics=[MeanIoUExt(num_classes=NUM_CLASSES)])
             self.model._init_set_name('deeplabv3plus_mnv2')
             
             if self.conf['multi_gpu']:
@@ -571,9 +570,9 @@ class SemanticSegmentation(object):
                         , kernel_size=1
                         , padding='same'
                         , use_bias=False
-                        , kernel_regularizer=regularizers.l2(self.hps['weight_decay'])
-                        , activation='relu')(low_features)
+                        , kernel_regularizer=regularizers.l2(self.hps['weight_decay']))(low_features)
         low_features = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(low_features)
+        low_features = Activation('relu')(low_features) 
         
         # Resize low_features, features.
         output_stride = self.nn_arch['output_stride']       
@@ -616,7 +615,7 @@ class SemanticSegmentation(object):
         tensorboard = tf.keras.callbacks.TensorBoard(histogram_freq=1
                , write_graph=True
                , write_images=True
-               , update_freq='batch')
+               , update_freq='epoch')
         
         '''
         def schedule_lr(e_i):
@@ -636,7 +635,7 @@ class SemanticSegmentation(object):
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
-                          , validation_freq=1)
+                          , validation_freq=20)
         else:     
             self.model.fit_generator(tr_gen
                           , steps_per_epoch=self.hps['step']                  
@@ -647,7 +646,7 @@ class SemanticSegmentation(object):
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
-                          , validation_freq=1)
+                          , validation_freq=20)
 
         print('Save the model.')
         self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='h5')            
