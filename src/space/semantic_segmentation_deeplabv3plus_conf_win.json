@@ -9,12 +9,12 @@
 		"beta_1" : 0.5,
 		"beta_2" : 0.99,
 		"decay" : 0.0,
-		"epochs" : 1,
+		"epochs" : 3,
 		"batch_size" : 6,
 		"weight_decay": 0.00004,
 		"bn_momentum": 0.9,
 		"bn_scale": true,
-		"reduce_lr_factor": 0.99999
+		"reduce_lr_factor": 0.99
 	},
 	"nn_arch" : {
 		"output_stride": 8,

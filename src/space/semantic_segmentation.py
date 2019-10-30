@@ -54,6 +54,11 @@ from tensorflow.keras.utils import CustomObjectScope
 from tensorflow.keras import initializers
 from tensorflow.keras import regularizers
 from tensorflow.keras.layers import BatchNormalization
+from tensorflow.keras.metrics import MeanIoU
+
+#from ku.metrics_ext import MeanIoUExt
+#from ku.metrics_ext.metrics import MeanIoUExt
+#from ku.callbacks_ext.tensorboard_ext import TensorBoardExt
 
 #os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 #os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
@@ -132,7 +137,7 @@ class SemanticSegmentation(object):
                                        , 'Segmentation'
                                        , 'train.txt')) as f:
                     self.file_names = f.readlines() #?
-            else:
+            elif self.mode == MODE_VAL:
                 with open(os.path.join(self.raw_data_path
                                        , 'pascal-voc-2012'
                                        , 'VOC2012'
@@ -140,6 +145,8 @@ class SemanticSegmentation(object):
                                        , 'Segmentation'
                                        , 'val.txt')) as f:
                     self.file_names = f.readlines() #?                
+            else:
+                raise ValueError('The mode must be MODE_TRAIN or MODE_VAL.')
             
             # Remove \n.
             for i in range(len(self.file_names)):
@@ -259,7 +266,7 @@ class SemanticSegmentation(object):
                     # Convert label to one hot label.
                     label = np.expand_dims(label, axis=-1)
                     label[label > (self.nn_arch['num_classes'] - 1)] = 0
-                    if self.mode == MODE_TRAIN and self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                    if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
                         
                     images.append(image)
                     labels.append(label)          
@@ -350,7 +357,7 @@ class SemanticSegmentation(object):
                     # Convert label to one hot label.
                     label = np.expand_dims(label, axis=-1)
                     label[label > (self.nn_arch['num_classes'] - 1)] = 0
-                    if self.mode == MODE_TRAIN and self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                    if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
                     
                     images.append(image)
                     labels.append(label)
@@ -377,7 +384,7 @@ class SemanticSegmentation(object):
                                         , beta_1=self.hps['beta_1']
                                         , beta_2=self.hps['beta_2']
                                         , decay=self.hps['decay']) 
-            with CustomObjectScope({}): 
+            with CustomObjectScope({}): #'MeanIoUExt': MeanIoUExt}): 
                 if self.conf['multi_gpu']:
                     self.model = load_model(self.MODEL_PATH)
                     
@@ -387,7 +394,7 @@ class SemanticSegmentation(object):
                                                 , metrics=self.model.metrics)
                 else:
                     self.model = load_model(os.path.join(self.raw_data_path, self.MODEL_PATH))
-                    #self.model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=[tf.keras.metrics.MeanIoU(num_classes=NUM_CLASSES)])
+                    #self.model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=[tf.keras.metrics.MeanIoUExt(num_classes=NUM_CLASSES)])
         else:
             # Design the semantic segmentation model.
             # Load mobilenetv2 as the base model.
@@ -418,7 +425,7 @@ class SemanticSegmentation(object):
             
             self.model.compile(optimizer=opt
                                , loss='categorical_crossentropy')
-                               #, metrics=[tf.keras.metrics.MeanIoU(num_classes=NUM_CLASSES)])
+                               #, metrics=[MeanIoUExt(num_classes=NUM_CLASSES)])
             self.model._init_set_name('deeplabv3plus_mnv2')
             
             if self.conf['multi_gpu']:
@@ -587,18 +594,29 @@ class SemanticSegmentation(object):
        
     def train(self):
         """Train."""        
-        trGen = self.TrainingSequencePascalVOC2012(self.raw_data_path, self.hps, self.nn_arch, mode=MODE_TRAIN)
+        tr_gen = self.TrainingSequencePascalVOC2012(self.raw_data_path
+                                                   , self.hps
+                                                   , self.nn_arch
+                                                   , mode=MODE_TRAIN)
+        val_gen = self.TrainingSequencePascalVOC2012(self.raw_data_path
+                                                    , self.hps
+                                                    , self.nn_arch
+                                                    , mode=MODE_VAL)
         assert 'step' in self.hps.keys()
         
         reduce_lr = ReduceLROnPlateau(monitor='loss'
                                       , factor=self.hps['reduce_lr_factor']
                                       , patience=5
-                                      , min_lr=0.00000001
+                                      , min_lr=1.e-8
                                       , verbose=1)
         model_check_point = ModelCheckpoint(os.path.join(self.raw_data_path, self.MODEL_PATH)
                                             , monitor='loss'
                                             , verbose=1
                                             , save_best_only=True)
+        tensorboard = tf.keras.callbacks.TensorBoard(histogram_freq=1
+               , write_graph=True
+               , write_images=True
+               , update_freq='batch')
         
         '''
         def schedule_lr(e_i):
@@ -609,23 +627,27 @@ class SemanticSegmentation(object):
         '''
         
         if self.conf['multi_gpu']:
-            self.parallel_model.fit_generator(trGen
+            self.parallel_model.fit_generator(tr_gen
                           , steps_per_epoch=self.hps['step'] #?                   
                           , epochs=self.hps['epochs']
                           , verbose=1
                           , max_queue_size=80
                           , workers=8
                           , use_multiprocessing=False
-                          , callbacks=[model_check_point, reduce_lr])
+                          , callbacks=[model_check_point, reduce_lr, tensorboard]
+                          , validation_data=val_gen
+                          , validation_freq=1)
         else:     
-            self.model.fit_generator(trGen
+            self.model.fit_generator(tr_gen
                           , steps_per_epoch=self.hps['step']                  
                           , epochs=self.hps['epochs']
                           , verbose=1
                           , max_queue_size=100
                           , workers=1
                           , use_multiprocessing=False
-                          , callbacks=[model_check_point, reduce_lr])
+                          , callbacks=[model_check_point, reduce_lr, tensorboard]
+                          , validation_data=val_gen
+                          , validation_freq=1)
 
         print('Save the model.')
         self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='h5')            
@@ -681,7 +703,7 @@ class SemanticSegmentation(object):
                 else:
                     output_generator = valGen
             
-            c_miou = tf.keras.metrics.MeanIoU(num_classes=NUM_CLASSES)
+            c_miou = MeanIoU(num_classes=NUM_CLASSES)
             pbar = tqdm(range(self.hps['step']))                                    
             for s_i in pbar: #?
                 images, labels = next(output_generator)

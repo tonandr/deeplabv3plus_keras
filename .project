@@ -3,6 +3,7 @@
 	<name>deeplabv3plus_keras</name>
 	<comment></comment>
 	<projects>
+		<project>keras_unsupervised</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>
