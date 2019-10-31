@@ -54,9 +54,9 @@ from tensorflow.keras.utils import CustomObjectScope
 from tensorflow.keras import initializers
 from tensorflow.keras import regularizers
 from tensorflow.keras.layers import BatchNormalization
-from tensorflow.keras.metrics import MeanIoU
 
 from ku.metrics_ext import MeanIoUExt
+from ku.loss_ext import CategoricalCrossentropyWithLabelGT
 #from ku.callbacks_ext.tensorboard_ext import TensorBoardExt
 
 #os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
@@ -265,7 +265,7 @@ class SemanticSegmentation(object):
                     # Convert label to one hot label.
                     label = np.expand_dims(label, axis=-1)
                     label[label > (self.nn_arch['num_classes'] - 1)] = 0
-                    if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                    #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
                         
                     images.append(image)
                     labels.append(label)          
@@ -356,7 +356,7 @@ class SemanticSegmentation(object):
                     # Convert label to one hot label.
                     label = np.expand_dims(label, axis=-1)
                     label[label > (self.nn_arch['num_classes'] - 1)] = 0
-                    if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                    #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
                     
                     images.append(image)
                     labels.append(label)
@@ -383,7 +383,8 @@ class SemanticSegmentation(object):
                                         , beta_1=self.hps['beta_1']
                                         , beta_2=self.hps['beta_2']
                                         , decay=self.hps['decay']) 
-            with CustomObjectScope({'MeanIoUExt': MeanIoUExt}): 
+            with CustomObjectScope({'CategoricalCrossentropyWithLabelGT':CategoricalCrossentropyWithLabelGT,
+                                    'MeanIoUExt': MeanIoUExt}): 
                 if self.conf['multi_gpu']:
                     self.model = load_model(self.MODEL_PATH)
                     
@@ -423,7 +424,7 @@ class SemanticSegmentation(object):
                                         , decay=self.hps['decay'])
             
             self.model.compile(optimizer=opt
-                               , loss='categorical_crossentropy'
+                               , loss=CategoricalCrossentropyWithLabelGT(num_classes=self.nn_arch['num_classes'])
                                , metrics=[MeanIoUExt(num_classes=NUM_CLASSES)])
             self.model._init_set_name('deeplabv3plus_mnv2')
             
@@ -635,7 +636,7 @@ class SemanticSegmentation(object):
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
-                          , validation_freq=20)
+                          , validation_freq=10)
         else:     
             self.model.fit_generator(tr_gen
                           , steps_per_epoch=self.hps['step']                  
@@ -646,7 +647,7 @@ class SemanticSegmentation(object):
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
-                          , validation_freq=20)
+                          , validation_freq=10)
 
         print('Save the model.')
         self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='h5')            
@@ -672,7 +673,7 @@ class SemanticSegmentation(object):
         valGen = self.TrainingSequencePascalVOC2012(self.raw_data_path
                                                     , self.hps
                                                     , self.nn_arch
-                                                    , mode=MODE_TRAIN
+                                                    , mode=MODE_VAL
                                                     , eval=True)
         use_multiprocessing = False
         max_queue_size = 80
@@ -702,19 +703,24 @@ class SemanticSegmentation(object):
                 else:
                     output_generator = valGen
             
-            c_miou = MeanIoU(num_classes=NUM_CLASSES)
+            c_miou = MeanIoUExt(num_classes=NUM_CLASSES)
             pbar = tqdm(range(self.hps['step']))                                    
             for s_i in pbar: #?
                 images, labels = next(output_generator)
-                labels[labels > (self.nn_arch['num_classes'] - 1)] = 0
-                
-                results = self.segment(images)
-                results[results > (self.nn_arch['num_classes'] - 1)] = 0
+                labels = get_one_hot(labels, self.nn_arch['num_classes'])
+
+                if self.conf['multi_gpu']:
+                    results = self.parallel_model.predict(images) #?
+                else:
+                    results = self.model.predict(images)
                                    
                 c_miou.update_state(results, labels)
                 pbar.set_description("Mean IOU: {}".format(c_miou.result().numpy()))
                 
                 # Save result images.
+                labels = np.argmax(labels, axis=-1)
+                results = np.argmax(results, axis=-1)
+                
                 for i in range(self.hps['batch_size']):
                     plt.subplot(121); plt.imshow(np.squeeze(labels[i]))
                     plt.subplot(122); plt.imshow(np.squeeze(results[i]))
@@ -748,22 +754,10 @@ class SemanticSegmentation(object):
         
         if self.conf['multi_gpu']:
             onehots = self.parallel_model.predict(images) #?
-            labels = np.zeros(shape=tuple(list(onehots.shape[:-1]) + [1]), dtype=np.uint8)
-            
-            for b_i in range(onehots.shape[0]):
-                for h_i in range(onehots.shape[1]):
-                    for w_i in range(onehots.shape[2]):
-                        labels[b_i, h_i, w_i, 0] = np.argmax(onehots[b_i, h_i, w_i, :])
         else:
             onehots = self.model.predict(images)
-            labels = np.zeros(shape=tuple(list(onehots.shape[:-1]) + [1]), dtype=np.uint8)
-            
-            for b_i in range(onehots.shape[0]):
-                for h_i in range(onehots.shape[1]):
-                    for w_i in range(onehots.shape[2]):
-                        labels[b_i, h_i, w_i, 0] = np.argmax(onehots[b_i, h_i, w_i, :])
                         
-        return labels 
+        return np.argmax(onehots, axis=-1) 
                           
 def main():
     """Main."""
