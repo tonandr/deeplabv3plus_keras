@@ -107,7 +107,7 @@ class SemanticSegmentation(object):
     class TrainingSequencePascalVOC2012(Sequence):
         """Training data set sequence for Pascal VOC 2012."""
                 
-        def __init__(self, raw_data_path, hps, nn_arch, mode=MODE_TRAIN, eval=False):
+        def __init__(self, raw_data_path, hps, nn_arch, mode=MODE_TRAIN):
             """
             Parameters
             ----------
@@ -126,7 +126,6 @@ class SemanticSegmentation(object):
             self.hps = hps
             self.nn_arch = nn_arch
             self.mode = mode
-            self.eval = eval
             
             if self.mode == MODE_TRAIN:
                 with open(os.path.join(self.raw_data_path
@@ -134,7 +133,7 @@ class SemanticSegmentation(object):
                                        , 'VOC2012'
                                        , 'ImageSets'
                                        , 'Segmentation'
-                                       , 'train.txt')) as f:
+                                       , 'train_aug.txt')) as f:
                     self.file_names = f.readlines() #?
             elif self.mode == MODE_VAL:
                 with open(os.path.join(self.raw_data_path
@@ -160,25 +159,36 @@ class SemanticSegmentation(object):
             self.label_dir_path = os.path.join(self.raw_data_path
                                            , 'pascal-voc-2012'
                                            , 'VOC2012'
-                                           , 'SegmentationClass')
+                                           , 'SegmentationClassAug')
             
             self.batch_size = self.hps['batch_size']
-            self.hps['step'] = self.total_samples // self.batch_size
             
-            if self.total_samples % self.batch_size != 0:
-                self.hps['temp_step'] = self.hps['step'] + 1
-            else:
-                self.hps['temp_step'] = self.hps['step']
+            if self.mode == MODE_TRAIN:
+                self.hps['tr_step'] = self.total_samples // self.batch_size
                 
+                if self.total_samples % self.batch_size != 0:
+                    self.temp_step = self.hps['tr_step'] + 1
+                else:
+                    self.temp_step = self.hps['tr_step']
+            elif self.mode == MODE_VAL:
+                self.hps['val_step'] = self.total_samples // self.batch_size
+                
+                if self.total_samples % self.batch_size != 0:
+                    self.temp_step = self.hps['val_step'] + 1
+                else:
+                    self.temp_step = self.hps['val_step']
+            else:
+                raise ValueError('The mode must be MODE_TRAIN or MODE_VAL.')
+                            
         def __len__(self):
-            return self.hps['temp_step']
+            return self.temp_step
         
         def __getitem__(self, index):
             images = []
             labels = []
             
             # Check the last index.
-            if index == (self.hps['temp_step'] - 1):
+            if index == (self.temp_step - 1):
                 for bi in range(index * self.batch_size, len(self.file_names)):
                     file_name = self.file_names[bi] 
                     #if DEBUG: print(file_name )
@@ -603,7 +613,7 @@ class SemanticSegmentation(object):
                                                     , self.hps
                                                     , self.nn_arch
                                                     , mode=MODE_VAL)
-        assert 'step' in self.hps.keys()
+        assert 'tr_step' in self.hps.keys() and 'val_step' in self.hps.keys()
         
         reduce_lr = ReduceLROnPlateau(monitor='loss'
                                       , factor=self.hps['reduce_lr_factor']
@@ -629,7 +639,7 @@ class SemanticSegmentation(object):
         
         if self.conf['multi_gpu']:
             self.parallel_model.fit_generator(tr_gen
-                          , steps_per_epoch=self.hps['step'] #?                   
+                          , steps_per_epoch=self.hps['tr_step'] #?                   
                           , epochs=self.hps['epochs']
                           , verbose=1
                           , max_queue_size=80
@@ -640,7 +650,7 @@ class SemanticSegmentation(object):
                           , validation_freq=1)
         else:     
             self.model.fit_generator(tr_gen
-                          , steps_per_epoch=self.hps['step']                  
+                          , steps_per_epoch=self.hps['tr_step']                  
                           , epochs=self.hps['epochs']
                           , verbose=1
                           , max_queue_size=100

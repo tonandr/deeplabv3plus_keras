@@ -17,6 +17,7 @@
 		"reduce_lr_factor": 0.99
 	},
 	"nn_arch" : {
+		"boundary_refinement": true,
 		"output_stride": 16,
 		"image_size": 512,
 		"num_classes": 21,
