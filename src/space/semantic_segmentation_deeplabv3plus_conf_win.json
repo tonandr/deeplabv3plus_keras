@@ -1,7 +1,7 @@
 {
-	"mode" : "evaluate",
+	"mode" : "train",
 	"raw_data_path" : "D:\\workspace\\deeplabv3plus_keras\\resource",
-	"model_loading" : true,
+	"model_loading" : false,
 	"multi_gpu" : false,
 	"num_gpus" : 4,
 	"hps" : {
@@ -9,16 +9,16 @@
 		"beta_1" : 0.5,
 		"beta_2" : 0.99,
 		"decay" : 0.0,
-		"epochs" : 3,
-		"batch_size" : 1,
+		"epochs" : 2,
+		"batch_size" : 2,
 		"weight_decay": 0.00004,
 		"bn_momentum": 0.9,
 		"bn_scale": true,
 		"reduce_lr_factor": 0.99
 	},
 	"nn_arch" : {
-		"output_stride": 8,
-		"image_size": 224,
+		"output_stride": 16,
+		"image_size": 512,
 		"num_classes": 21,
 		"mv2_depth_multiplier": 1,
 		"depth_multiplier": 1,

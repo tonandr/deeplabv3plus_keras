@@ -263,7 +263,7 @@ class SemanticSegmentation(object):
                         label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
                     
                     # Convert label to one hot label.
-                    label = np.expand_dims(label, axis=-1)
+                    #label = np.expand_dims(label, axis=-1)
                     label[label > (self.nn_arch['num_classes'] - 1)] = 0
                     #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
                         
@@ -354,7 +354,7 @@ class SemanticSegmentation(object):
                         label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
                     
                     # Convert label to one hot label.
-                    label = np.expand_dims(label, axis=-1)
+                    #label = np.expand_dims(label, axis=-1)
                     label[label > (self.nn_arch['num_classes'] - 1)] = 0
                     #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
                     
@@ -399,10 +399,11 @@ class SemanticSegmentation(object):
             # Design the semantic segmentation model.
             # Load mobilenetv2 as the base model.
             mv2 = MobileNetV2(include_top=False) #, depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
-            self.base = Model(inputs=mv2.inputs
-                              , outputs=mv2.get_layer('block_5_add').output) # Layer satisfying output stride of 8.
-            self.base.trainable = False
-            for layer in self.base.layers: layer.trainable = False #?
+            #self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_5_add').output) # Layer satisfying output stride of 8.
+            self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_12_add').output) # Layer satisfying output stride of 16.
+            
+            self.base.trainable = True
+            for layer in self.base.layers: layer.trainable = True #?
             
             self.base._init_set_name('base') 
             
@@ -636,7 +637,7 @@ class SemanticSegmentation(object):
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
-                          , validation_freq=10)
+                          , validation_freq=1)
         else:     
             self.model.fit_generator(tr_gen
                           , steps_per_epoch=self.hps['step']                  
@@ -647,7 +648,7 @@ class SemanticSegmentation(object):
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
-                          , validation_freq=10)
+                          , validation_freq=1)
 
         print('Save the model.')
         self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='h5')            
@@ -707,18 +708,16 @@ class SemanticSegmentation(object):
             pbar = tqdm(range(self.hps['step']))                                    
             for s_i in pbar: #?
                 images, labels = next(output_generator)
-                labels = get_one_hot(labels, self.nn_arch['num_classes'])
 
                 if self.conf['multi_gpu']:
                     results = self.parallel_model.predict(images) #?
                 else:
                     results = self.model.predict(images)
                                    
-                c_miou.update_state(results, labels)
+                c_miou.update_state(labels, results)
                 pbar.set_description("Mean IOU: {}".format(c_miou.result().numpy()))
                 
                 # Save result images.
-                labels = np.argmax(labels, axis=-1)
                 results = np.argmax(results, axis=-1)
                 
                 for i in range(self.hps['batch_size']):
