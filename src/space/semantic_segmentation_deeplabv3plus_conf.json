@@ -4,6 +4,8 @@
 	"model_loading" : false,
 	"multi_gpu" : false,
 	"num_gpus" : 4,
+	"eval_data_mode": 1,
+	"eval_result_saving": false,
 	"hps" : {
 		"lr" : 0.0001,
 		"beta_1" : 0.5,
@@ -17,6 +19,7 @@
 		"reduce_lr_factor": 0.99
 	},
 	"nn_arch" : {
+		"boundary_refinement": false,
 		"output_stride": 16,
 		"image_size": 512,
 		"num_classes": 21,

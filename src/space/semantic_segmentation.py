@@ -235,7 +235,7 @@ class SemanticSegmentation(object):
                         image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
                         
                     # Load label.
-                    label = np.expand_dims(np.array(Image.open(label_path)), axis=-1)
+                    label = np.expand_dims(imread(label_path), axis=-1)
                     label[label > (self.nn_arch['num_classes'] - 1)] = 0
                                                              
                     # Adjust the original label size into the normalized label size according to the ratio of width, height.
@@ -326,7 +326,7 @@ class SemanticSegmentation(object):
                         image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
                         
                     # Load label.
-                    label = np.expand_dims(np.array(Image.open(label_path)), axis=-1)
+                    label = np.expand_dims(imread(label_path), axis=-1)
                     label[label > (self.nn_arch['num_classes'] - 1)] = 0
                                                              
                     # Adjust the original label size into the normalized label size according to the ratio of width, height.
@@ -381,6 +381,9 @@ class SemanticSegmentation(object):
             Semantic segmentation model configuration dictionary.
         """
         
+        # Check exception.
+        assert conf['nn_arch']['output_stride'] == 8 or conf['nn_arch']['output_stride'] == 16 
+        
         # Initialize.
         self.conf = conf
         self.raw_data_path = self.conf['raw_data_path']
@@ -404,13 +407,18 @@ class SemanticSegmentation(object):
                                                 , metrics=self.model.metrics)
                 else:
                     self.model = load_model(os.path.join(self.raw_data_path, self.MODEL_PATH))
-                    #self.model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=[tf.keras.metrics.MeanIoUExt(num_classes=NUM_CLASSES)])
+                    #self.model.compile(optimizer=opt, 
+                    #           , loss=CategoricalCrossentropyWithLabelGT(num_classes=self.nn_arch['num_classes'])
+                    #           , metrics=[MeanIoUExt(num_classes=NUM_CLASSES)]
         else:
             # Design the semantic segmentation model.
             # Load mobilenetv2 as the base model.
             mv2 = MobileNetV2(include_top=False) #, depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
-            #self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_5_add').output) # Layer satisfying output stride of 8.
-            self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_12_add').output) # Layer satisfying output stride of 16.
+            
+            if self.nn_arch['output_stride'] == 8:
+                self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_5_add').output) # Layer satisfying output stride of 8.
+            else:
+                self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_12_add').output) # Layer satisfying output stride of 16.
             
             self.base.trainable = True
             for layer in self.base.layers: layer.trainable = True #?
@@ -423,8 +431,8 @@ class SemanticSegmentation(object):
             
             inputs = self.encoder.inputs
             features = self.encoder(inputs)
-            #outputs = self.decoder([inputs[0], features])
-            outputs = self.decoder(features)
+            outputs = self.decoder([inputs[0], features]) if self.nn_arch['boundary_refinement'] \
+                else self.decoder(features)
             
             self.model = Model(inputs, outputs)
             
@@ -526,7 +534,8 @@ class SemanticSegmentation(object):
                     , kernel_regularizer=regularizers.l2(self.hps['weight_decay']))(x3)
         x3 = BatchNormalization(momentum=self.hps['bn_momentum'], scale=self.hps['bn_scale'])(x3)
         x3 = Activation('relu')(x3) 
-        output = Dropout(rate=self.nn_arch['dropout_rate'])(x3)
+        #output = Dropout(rate=self.nn_arch['dropout_rate'])(x3)
+        output = x3
         
         self.encoder = Model(input_image, output)
         self.encoder._init_set_name('encoder')
@@ -537,11 +546,13 @@ class SemanticSegmentation(object):
         
         inputs = self.encoder.outputs
         features = Input(shape=K.int_shape(inputs[0])[1:])
-        x = features 
-        
-        # Refine boundary.
-        #low_features = Input(shape=K.int_shape(self.encoder.inputs[0])[1:])
-        #x = self._refine_boundary(low_features, features)
+ 
+        if self.nn_arch['boundary_refinement']:
+            # Refine boundary.
+            low_features = Input(shape=K.int_shape(self.encoder.inputs[0])[1:])
+            x = self._refine_boundary(low_features, features)
+        else:
+            x = features
         
         # Upsampling & softmax.
         x = Conv2D(self.nn_arch['num_classes']
@@ -551,15 +562,19 @@ class SemanticSegmentation(object):
                    , kernel_regularizer=regularizers.l2(self.hps['weight_decay']))(x) # Kernel size?
         
         output_stride = self.nn_arch['output_stride']
+        
+        if self.nn_arch['boundary_refinement']:
+            output_stride = output_stride / 8 if output_stride == 16 else output_stride / 4
+            
         x = Lambda(lambda x: K.resize_images(x
-                                             , output_stride #4
-                                             , output_stride #4
+                                             , output_stride
+                                             , output_stride
                                              , "channels_last"
                                              , interpolation='bilinear'))(x) #?
         outputs = Activation('softmax')(x)
         
-        #self.decoder = Model(inputs=[low_features, features], outputs=outputs)
-        self.decoder = Model(inputs=[features], outputs=outputs)
+        self.decoder = Model(inputs=[low_features, features], outputs=outputs) if self.nn_arch['boundary_refinement'] \
+            else Model(inputs=[features], outputs=outputs)
         self.decoder._init_set_name('decoder')
     
     def _refine_boundary(self, low_features, features):
@@ -664,13 +679,20 @@ class SemanticSegmentation(object):
         self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='h5')            
         #self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='tf')
         
-    def evaluate(self):
+    def evaluate(self, mode=MODE_VAL, result_saving=False):
         """Evaluate.
         
+        Parameters
+        ----------
+        mode: Integer.
+            Data mode (default: MODE_VAL).
+        result_saving: Boolean.
+            Result saving flag (default: False).
         Returns
         -------
         Mean iou.
             Scalar float.
+        
         """
         assert hasattr(self, 'model')
 
@@ -684,8 +706,10 @@ class SemanticSegmentation(object):
         valGen = self.TrainingSequencePascalVOC2012(self.raw_data_path
                                                     , self.hps
                                                     , self.nn_arch
-                                                    , mode=MODE_VAL
-                                                    , eval=True)
+                                                    , mode=mode)
+        assert 'tr_step' in self.hps.keys() or 'val_step' in self.hps.keys()
+        step = self.hps['val_step'] if mode == MODE_VAL else self.hps['tr_step']
+        
         use_multiprocessing = False
         max_queue_size = 80
         workers = 4
@@ -715,7 +739,7 @@ class SemanticSegmentation(object):
                     output_generator = valGen
             
             c_miou = MeanIoUExt(num_classes=NUM_CLASSES)
-            pbar = tqdm(range(self.hps['step']))                                    
+            pbar = tqdm(range(step))                                    
             for s_i in pbar: #?
                 images, labels = next(output_generator)
 
@@ -728,14 +752,15 @@ class SemanticSegmentation(object):
                 pbar.set_description("Mean IOU: {}".format(c_miou.result().numpy()))
                 
                 # Save result images.
-                results = np.argmax(results, axis=-1)
-                
-                for i in range(self.hps['batch_size']):
-                    plt.subplot(121); plt.imshow(np.squeeze(labels[i]))
-                    plt.subplot(122); plt.imshow(np.squeeze(results[i]))
-                    plt.savefig(os.path.join(self.raw_data_path
-                                             , 'results'
-                                             , 'result_{0:d}.png'.format(s_i * self.hps['batch_size'] + i)))                
+                if result_saving:
+                    results = np.argmax(results, axis=-1)
+                    
+                    for i in range(self.hps['batch_size']):
+                        plt.subplot(121); plt.imshow(np.squeeze(labels[i]))
+                        plt.subplot(122); plt.imshow(np.squeeze(results[i]))
+                        plt.savefig(os.path.join(self.raw_data_path
+                                                 , 'results'
+                                                 , 'result_{0:d}.png'.format(s_i * self.hps['batch_size'] + i)))                
         finally:
             try:
                 if enq is not None:
@@ -793,7 +818,7 @@ def main():
         ss = SemanticSegmentation(conf)
         
         ts = time.time()
-        ss.evaluate()
+        ss.evaluate(mode=conf['eval_data_mode'], result_saving=conf['eval_result_saving'])
         te = time.time()
         
         print('Elasped time: {0:f}s'.format(te-ts))                   
