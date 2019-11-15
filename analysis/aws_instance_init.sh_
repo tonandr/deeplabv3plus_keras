@@ -1,20 +1,30 @@
+#!/bin/bash
 source activate tensorflow_p36
+pip install --user --upgrade pip
 pip uninstall -y tensorflow
-pip install --upgrade pip
-pip install tensorflow-gpu==2.0.0
+pip install tensorflow
+pip install tensorflow-gpu
+conda update -y -n base -c defaults conda
 conda install -y cudnn
+mkdir pre_home
+sudo mount /dev/nvme2n1p1 ./pre_home
+pip install -i https://test.pypi.org/simple keras_unsupervised #?
 git clone https://github.com/tonandr/deeplabv3plus_keras.git
+sudo apt install -y xemacs21
+sudo apt install -y s3fs
+cd deeplabv3plus_keras
 python setup.py sdist bdist_wheel
 pip install -e ./
-sudo apt install xemacs21
-sudo apt install s3fs
-echo "XXX:XXX" > .passwd-s3fs
-chmod 600 .passwd-s3fs
-cd deeplabv3plus_keras/
-mkdir resource_raw
-s3fs jangsik ./resource_raw -o umask=00
-ln -s ./resource_raw/deeplabv3plus_keras/resource ./
-cd src/space
+ln -s ~/pre_home/home/ubuntu/resource/ ./
 
-mkdir resource
-cp -r ./resource_raw/deeplabv3plus_keras/resource/pascal-voc-2012 ~/deeplabv3plus_keras/resource
+#cd .. 
+#echo "XXX:XXX" > .passwd-s3fs
+#chmod 600 .passwd-s3fs
+#cd deeplabv3plus_keras/
+#cd src/space
+
+#mkdir resource_raw
+#s3fs jangsik ./resource_raw -o umask=00
+#ln -s ./resource_raw/deeplabv3plus_keras/resource ./
+#mkdir resource
+#cp -r ./resource_raw/deeplabv3plus_keras/resource/pascal-voc-2012 ~/deeplabv3plus_keras/resource

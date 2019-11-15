@@ -13,8 +13,7 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     url="https://github.com/tonandr/deeplabv3plus_keras",
     packages=setuptools.find_packages(exclude=['analysis', 'samples', 'resource']),
-    install_requires=['tensorflow-gpu==2.0.0'
-                      , 'scipy==1.3.1'
+    install_requires=['scipy==1.3.1'
                       , 'pandas==0.25.1'
                       , 'scikit-image==0.15.0'
                       , 'opencv-contrib-python==4.1.1.26'
