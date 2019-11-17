@@ -6,6 +6,7 @@
 	"num_gpus" : 4,
 	"eval_data_mode": 1,
 	"eval_result_saving": false,
+	"base_model": 0,
 	"hps" : {
 		"lr" : 0.007,
 		"beta_1" : 0.5,

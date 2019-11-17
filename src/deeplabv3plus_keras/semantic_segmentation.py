@@ -31,22 +31,20 @@ import warnings
 import shutil
 
 import numpy as np
-import pandas as pd
 import cv2 as cv
 from skimage.io import imread, imsave
-from PIL import Image
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 import tensorflow as tf
 import tensorflow.keras.backend as K
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import Input, Conv2D, Dropout, DepthwiseConv2D
+from tensorflow.keras.layers import Input, Conv2D, Dropout
 from tensorflow.keras.layers import Concatenate, Lambda, Activation, AveragePooling2D, SeparableConv2D
 from tensorflow.keras.utils import multi_gpu_model
 
 from tensorflow.keras import optimizers
-from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications import MobileNetV2, Xception
 from tensorflow.keras.utils import Sequence, GeneratorEnqueuer, OrderedEnqueuer
 from tensorflow.keras.callbacks import ReduceLROnPlateau, ModelCheckpoint, LearningRateScheduler
 from tensorflow.keras.utils import CustomObjectScope
@@ -69,6 +67,9 @@ NUM_CLASSES = 21
 
 MODE_TRAIN = 0
 MODE_VAL = 1
+
+BASE_MODEL_MOBILENETV2 = 0
+BASE_MODEL_XCEPTION = 1
 
 class SemanticSegmentation(object):
     """Keras Semantic segmentation model of DeeplabV3+"""
@@ -117,18 +118,33 @@ class SemanticSegmentation(object):
                     #           , metrics=[MeanIoUExt(num_classes=NUM_CLASSES)]
         else:
             # Design the semantic segmentation model.
-            # Load mobilenetv2 as the base model.
-            mv2 = MobileNetV2(include_top=False) #, depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
-            
-            if self.nn_arch['output_stride'] == 8:
-                self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_5_add').output) # Layer satisfying output stride of 8.
-            else:
-                self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_12_add').output) # Layer satisfying output stride of 16.
-            
-            self.base.trainable = True
-            for layer in self.base.layers: layer.trainable = True #?
-            
-            self.base._init_set_name('base') 
+            # Load a base model.
+            if self.conf['base_model'] == BASE_MODEL_MOBILENETV2:
+                # Load mobilenetv2 as the base model.
+                mv2 = MobileNetV2(include_top=False) #, depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+                
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_5_add').output) # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_12_add').output) # Layer satisfying output stride of 16.
+                
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True #?
+                
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_XCEPTION:
+                # Load xception as the base model.
+                mv2 = Xception(include_top=False) #, depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+                
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block4_sepconv2_bn').output) # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block13_sepconv2_bn').output) # Layer satisfying output stride of 16.
+                
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True #?
+                
+                self.base._init_set_name('base') 
             
             # Make the encoder-decoder model.
             self._make_encoder()
