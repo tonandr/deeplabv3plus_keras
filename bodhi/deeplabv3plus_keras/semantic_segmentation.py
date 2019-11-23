@@ -52,7 +52,7 @@ from tensorflow.keras import initializers
 from tensorflow.keras import regularizers
 from tensorflow.keras.layers import BatchNormalization
 
-from tensorflow_core.python.keras.utils.data_utils import iter_sequence_infinite
+from tensorflow.python.keras.utils.data_utils import iter_sequence_infinite
 
 from ku.metrics_ext import MeanIoUExt
 from ku.loss_ext import CategoricalCrossentropyWithLabelGT
@@ -67,6 +67,7 @@ NUM_CLASSES = 21
 
 MODE_TRAIN = 0
 MODE_VAL = 1
+MODE_TEST = 2
 
 BASE_MODEL_MOBILENETV2 = 0
 BASE_MODEL_XCEPTION = 1
@@ -112,7 +113,7 @@ class SemanticSegmentation(object):
                                                 , loss=self.model.losses
                                                 , metrics=self.model.metrics)
                 else:
-                    self.model = load_model(os.path.join(self.raw_data_path, self.MODEL_PATH))
+                    self.model = load_model(self.MODEL_PATH)
                     #self.model.compile(optimizer=opt, 
                     #           , loss=CategoricalCrossentropyWithLabelGT(num_classes=self.nn_arch['num_classes'])
                     #           , metrics=[MeanIoUExt(num_classes=NUM_CLASSES)]
@@ -440,6 +441,7 @@ class SemanticSegmentation(object):
         if not isinstance(valGen, Sequence) and use_multiprocessing and workers > 1:
             warnings.warn(UserWarning('For multi processing, use the instance of Sequence.'))
         
+        enq=None
         try:        
             # Get the output generator.
             if workers > 0:
@@ -474,23 +476,98 @@ class SemanticSegmentation(object):
                 
                 # Save result images.
                 if result_saving:
-                    results = np.argmax(results, axis=-1)
+                    results = np.argmax(results, axis=-1) * 255. / self.nn_arch['num_classes']
+                    results = np.tile(np.expand_dims(results, axis=-1), (1, 1, 1, 3))
+                    labels = labels * 255. / self.nn_arch['num_classes']
+                    labels = np.tile(np.expand_dims(labels, axis=-1), (1, 1, 1, 3)) 
                     
-                    for i in range(self.hps['batch_size']):
-                        plt.subplot(121); plt.imshow(np.squeeze(labels[i]))
-                        plt.subplot(122); plt.imshow(np.squeeze(results[i]))
-                        plt.savefig(os.path.join(self.raw_data_path
-                                                 , 'results'
-                                                 , 'result_{0:d}.png'.format(s_i * self.hps['batch_size'] + i)))                
+                    for b_i in range(self.hps['batch_size']):
+                        image = (images[b_i] + 1.0) * 0.5 * 255.
+                        image = image.astype('uint8')
+                        label = labels[b_i].astype('uint8')
+                        result = results[b_i].astype('uint8')
+                        overlay_result = cv.addWeighted(image, 0.5, result, 0.5, 0.)
+                        final_result = np.concatenate([image, label, result, overlay_result], axis=1)
+                        imsave(os.path.join(self.raw_data_path
+                                            , 'results'
+                                            , 'result_{0:d}.png'.format(s_i * self.hps['batch_size'] + b_i))
+                                , final_result)
         finally:
             try:
-                if enq is not None:
+                if enq:
                     enq.stop()
             finally:
                 pass
         
         print('Mean iou: {}'.format(c_miou))
         return c_miou
+
+    def test(self):
+        """Test."""
+        # Initialize the results directory
+        if not os.path.isdir(os.path.join(self.raw_data_path, 'test_results')):
+            os.mkdir(os.path.join(self.raw_data_path, 'test_results'))
+        else:
+            shutil.rmtree(os.path.join(self.raw_data_path, 'test_results'))
+            os.mkdir(os.path.join(self.raw_data_path, 'test_results'))
+
+        testGen = self.TrainingSequencePascalVOC2012(self.raw_data_path
+                                                    , self.hps
+                                                    , self.nn_arch
+                                                    , mode=MODE_TEST)
+        step = self.hps['test_step']
+        
+        use_multiprocessing = False
+        max_queue_size = 80
+        workers = 4
+        shuffle = False
+                   
+        # Check exception.
+        if not isinstance(testGen, Sequence) and use_multiprocessing and workers > 1:
+            warnings.warn(UserWarning('For multi processing, use the instance of Sequence.'))
+        
+        try:        
+            # Get the output generator.
+            if workers > 0:
+                if isinstance(testGen, Sequence):
+                    enq = OrderedEnqueuer(testGen
+                                      , use_multiprocessing=use_multiprocessing
+                                      , shuffle=shuffle)
+                else:
+                    enq = GeneratorEnqueuer(testGen
+                                            , use_multiprocessing=use_multiprocessing)
+                    
+                enq.start(workers=workers, max_queue_size=max_queue_size)
+                output_generator = enq.get()
+            else:
+                if isinstance(testGen, Sequence):
+                    output_generator = iter_sequence_infinite(testGen)
+                else:
+                    output_generator = testGen
+            
+            pbar = tqdm(range(step))                                    
+            for s_i in pbar: #?
+                images, labels, file_names = next(output_generator)
+
+                if self.conf['multi_gpu']:
+                    results = self.parallel_model.predict(images) #?
+                else:
+                    results = self.model.predict(images)
+                                   
+                # Save result images.
+                results = np.argmax(results, axis=-1)
+                
+                for i in range(self.hps['batch_size']):
+                    imsave(os.path.join(self.raw_data_path
+                                        , 'test_results'
+                                        , file_names[i].split('.')[0] + '.png')
+                            , results[i].astype('uint8')) #?
+        finally:
+            try:
+                if enq is not None:
+                    enq.stop()
+            finally:
+                pass        
             
     def segment(self, images):
         """Segment semantic regions. 
@@ -539,7 +616,7 @@ class SemanticSegmentation(object):
             
             if self.mode == MODE_TRAIN:
                 with open(os.path.join(self.raw_data_path
-                                       , 'pascal-voc-2012'
+                                       , 'VOCdevkit'
                                        , 'VOC2012'
                                        , 'ImageSets'
                                        , 'Segmentation'
@@ -547,11 +624,20 @@ class SemanticSegmentation(object):
                     self.file_names = f.readlines() #?
             elif self.mode == MODE_VAL:
                 with open(os.path.join(self.raw_data_path
-                                       , 'pascal-voc-2012'
+                                       , 'VOCdevkit'
                                        , 'VOC2012'
                                        , 'ImageSets'
                                        , 'Segmentation'
                                        , 'val.txt')) as f:
+                    self.file_names = f.readlines() #? 
+            elif self.mode == MODE_TEST:
+                with open(os.path.join(self.raw_data_path
+                                       , 'pascal-voc-2012-test'
+                                       , 'VOCdevkit'
+                                       , 'VOC2012'
+                                       , 'ImageSets'
+                                       , 'Segmentation'
+                                       , 'test.txt')) as f:
                     self.file_names = f.readlines() #?                
             else:
                 raise ValueError('The mode must be MODE_TRAIN or MODE_VAL.')
@@ -562,12 +648,19 @@ class SemanticSegmentation(object):
                 
             self.total_samples = len(self.file_names)
             
-            self.image_dir_path = os.path.join(self.raw_data_path
-                                           , 'pascal-voc-2012'
+            if self.mode == MODE_TEST:
+                self.image_dir_path = os.path.join(self.raw_data_path
+                                           , 'pascal-voc-2012-test'
+                                           , 'VOCdevkit'
                                            , 'VOC2012'
                                            , 'JPEGImages')
-            self.label_dir_path = os.path.join(self.raw_data_path
-                                           , 'pascal-voc-2012'
+            else:
+                self.image_dir_path = os.path.join(self.raw_data_path
+                                           , 'VOCdevkit'
+                                           , 'VOC2012'
+                                           , 'JPEGImages')
+                self.label_dir_path = os.path.join(self.raw_data_path
+                                           , 'VOCdevkit'
                                            , 'VOC2012'
                                            , 'SegmentationClassAug')
             
@@ -587,6 +680,13 @@ class SemanticSegmentation(object):
                     self.temp_step = self.hps['val_step'] + 1
                 else:
                     self.temp_step = self.hps['val_step']
+            elif self.mode == MODE_TEST:
+                self.hps['test_step'] = self.total_samples // self.batch_size
+                
+                if self.total_samples % self.batch_size != 0:
+                    self.temp_step = self.hps['test_step'] + 1
+                else:
+                    self.temp_step = self.hps['test_step']
             else:
                 raise ValueError('The mode must be MODE_TRAIN or MODE_VAL.')
                             
@@ -596,15 +696,17 @@ class SemanticSegmentation(object):
         def __getitem__(self, index):
             images = []
             labels = []
+            file_names = []
             
             # Check the last index.
             if index == (self.temp_step - 1):
                 for bi in range(index * self.batch_size, len(self.file_names)):
-                    file_name = self.file_names[bi] 
+                    file_name = self.file_names[bi]
+                    if self.mode == MODE_TEST: 
+                        file_names.append(file_name) 
                     #if DEBUG: print(file_name )
                     
                     image_path = os.path.join(self.image_dir_path, file_name + '.jpg')
-                    label_path = os.path.join(self.label_dir_path, file_name + '.png') #?
                     
                     # Load image.
                     image = imread(image_path)
@@ -627,7 +729,7 @@ class SemanticSegmentation(object):
                             pad_t = pad // 2
                             pad_b = pad // 2 + 1
         
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_CUBIC)
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
                         image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
                     else:
                         h_p = self.nn_arch['image_size']
@@ -641,61 +743,66 @@ class SemanticSegmentation(object):
                             pad_l = pad // 2
                             pad_r = pad // 2 + 1                
                         
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_CUBIC)
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
                         image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                        
-                    # Load label.
-                    label = np.expand_dims(imread(label_path), axis=-1)
-                    label[label > (self.nn_arch['num_classes'] - 1)] = 0
-                                                             
-                    # Adjust the original label size into the normalized label size according to the ratio of width, height.
-                    w = label.shape[1]
-                    h = label.shape[0]
-                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                    
-                    if w >= h:
-                        w_p = self.nn_arch['image_size']
-                        h_p = int(h / w * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - h_p
-                        
-                        if pad % 2 == 0:
-                            pad_t = pad // 2
-                            pad_b = pad // 2
-                        else:
-                            pad_t = pad // 2
-                            pad_b = pad // 2 + 1
-        
-                        label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_CUBIC)
-                        label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    else:
-                        h_p = self.nn_arch['image_size']
-                        w_p = int(w / h * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - w_p
-                        
-                        if pad % 2 == 0:
-                            pad_l = pad // 2
-                            pad_r = pad // 2
-                        else:
-                            pad_l = pad // 2
-                            pad_r = pad // 2 + 1                
-                        
-                        label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_CUBIC)
-                        label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
                     
-                    # Convert label to one hot label.
-                    #label = np.expand_dims(label, axis=-1)
-                    label[label > (self.nn_arch['num_classes'] - 1)] = 0
-                    #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
-                        
                     images.append(image)
-                    labels.append(label)          
+                    
+                    if self.mode != MODE_TEST:    
+                        # Load label.
+                        label_path = os.path.join(self.label_dir_path, file_name + '.png') #?
+                        
+                        label = np.expand_dims(imread(label_path), axis=-1)
+                        label[label > (self.nn_arch['num_classes'] - 1)] = 0
+                                                                 
+                        # Adjust the original label size into the normalized label size according to the ratio of width, height.
+                        w = label.shape[1]
+                        h = label.shape[0]
+                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+                                        
+                        if w >= h:
+                            w_p = self.nn_arch['image_size']
+                            h_p = int(h / w * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - h_p
+                            
+                            if pad % 2 == 0:
+                                pad_t = pad // 2
+                                pad_b = pad // 2
+                            else:
+                                pad_t = pad // 2
+                                pad_b = pad // 2 + 1
+            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        else:
+                            h_p = self.nn_arch['image_size']
+                            w_p = int(w / h * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - w_p
+                            
+                            if pad % 2 == 0:
+                                pad_l = pad // 2
+                                pad_r = pad // 2
+                            else:
+                                pad_l = pad // 2
+                                pad_r = pad // 2 + 1                
+                            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        
+                        # Convert label to one hot label.
+                        #label = np.expand_dims(label, axis=-1)
+                        label[label > (self.nn_arch['num_classes'] - 1)] = 0
+                        #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        
+                        labels.append(label)          
             else:
                 for bi in range(index * self.batch_size, (index + 1) * self.batch_size):
-                    file_name = self.file_names[bi] 
+                    file_name = self.file_names[bi]
+                    if self.mode == MODE_TEST: 
+                        file_names.append(file_name) 
                     #if DEBUG: print(file_name )
                     
                     image_path = os.path.join(self.image_dir_path, file_name + '.jpg')
-                    label_path = os.path.join(self.label_dir_path, file_name + '.png') #?
                     
                     # Load image.
                     image = imread(image_path)
@@ -718,7 +825,7 @@ class SemanticSegmentation(object):
                             pad_t = pad // 2
                             pad_b = pad // 2 + 1
         
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_CUBIC)
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
                         image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
                     else:
                         h_p = self.nn_arch['image_size']
@@ -732,56 +839,61 @@ class SemanticSegmentation(object):
                             pad_l = pad // 2
                             pad_r = pad // 2 + 1                
                         
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_CUBIC)
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
                         image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                        
-                    # Load label.
-                    label = np.expand_dims(imread(label_path), axis=-1)
-                    label[label > (self.nn_arch['num_classes'] - 1)] = 0
-                                                             
-                    # Adjust the original label size into the normalized label size according to the ratio of width, height.
-                    w = label.shape[1]
-                    h = label.shape[0]
-                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                    
-                    if w >= h:
-                        w_p = self.nn_arch['image_size']
-                        h_p = int(h / w * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - h_p
-                        
-                        if pad % 2 == 0:
-                            pad_t = pad // 2
-                            pad_b = pad // 2
-                        else:
-                            pad_t = pad // 2
-                            pad_b = pad // 2 + 1
-        
-                        label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_CUBIC)
-                        label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    else:
-                        h_p = self.nn_arch['image_size']
-                        w_p = int(w / h * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - w_p
-                        
-                        if pad % 2 == 0:
-                            pad_l = pad // 2
-                            pad_r = pad // 2
-                        else:
-                            pad_l = pad // 2
-                            pad_r = pad // 2 + 1                
-                        
-                        label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_CUBIC)
-                        label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    
-                    # Convert label to one hot label.
-                    #label = np.expand_dims(label, axis=-1)
-                    label[label > (self.nn_arch['num_classes'] - 1)] = 0
-                    #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
                     
                     images.append(image)
-                    labels.append(label)
+                    
+                    if self.mode != MODE_TEST:    
+                        # Load label.
+                        label_path = os.path.join(self.label_dir_path, file_name + '.png') #?
+                        
+                        label = np.expand_dims(imread(label_path), axis=-1)
+                        label[label > (self.nn_arch['num_classes'] - 1)] = 0
+                                                                 
+                        # Adjust the original label size into the normalized label size according to the ratio of width, height.
+                        w = label.shape[1]
+                        h = label.shape[0]
+                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+                                        
+                        if w >= h:
+                            w_p = self.nn_arch['image_size']
+                            h_p = int(h / w * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - h_p
+                            
+                            if pad % 2 == 0:
+                                pad_t = pad // 2
+                                pad_b = pad // 2
+                            else:
+                                pad_t = pad // 2
+                                pad_b = pad // 2 + 1
+            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        else:
+                            h_p = self.nn_arch['image_size']
+                            w_p = int(w / h * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - w_p
+                            
+                            if pad % 2 == 0:
+                                pad_l = pad // 2
+                                pad_r = pad // 2
+                            else:
+                                pad_l = pad // 2
+                                pad_r = pad // 2 + 1                
+                            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        
+                        # Convert label to one hot label.
+                        #label = np.expand_dims(label, axis=-1)
+                        label[label > (self.nn_arch['num_classes'] - 1)] = 0
+                        #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        
+                        labels.append(label)
                                                                          
-            return (np.asarray(images), np.asarray(labels)) 
+            return (np.asarray(images), np.asarray(labels)) \
+                    if self.mode != MODE_TEST else (np.asarray(images), np.asarray(labels), file_names) 
                           
 def main():
     """Main."""
@@ -811,7 +923,16 @@ def main():
         ss.evaluate(mode=conf['eval_data_mode'], result_saving=conf['eval_result_saving'])
         te = time.time()
         
-        print('Elasped time: {0:f}s'.format(te-ts))                   
+        print('Elasped time: {0:f}s'.format(te-ts))
+    elif conf['mode'] == 'test':
+        # Evaluate.
+        ss = SemanticSegmentation(conf)
+        
+        ts = time.time()
+        ss.test()
+        te = time.time()
+        
+        print('Elasped time: {0:f}s'.format(te-ts))                    
              
 if __name__ == '__main__':
     main()

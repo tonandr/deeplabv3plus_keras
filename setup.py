@@ -8,7 +8,7 @@ setuptools.setup(
     version="1.0.0",
     author="Inwoo Chung",
     author_email="gutomitai@gmail.com",
-    description="Keras deeplabV3+ semantic segmentation model using MobileNetV2 as a base model.",
+    description="Keras deeplabV3+ semantic segmentation model using Xception and MobileNetV2 as a base model.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/tonandr/deeplabv3plus_keras",
@@ -18,7 +18,8 @@ setuptools.setup(
                       , 'scikit-image==0.15.0'
                       , 'opencv-contrib-python==4.1.1.26'
                       , 'matplotlib==3.1.0'
-                      , 'tqdm==4.32.2'],  # Optional
+                      , 'tqdm==4.32.2'
+                      , 'keras_unsupervised'],  # Optional
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",

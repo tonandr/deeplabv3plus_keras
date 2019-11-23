@@ -10,11 +10,7 @@ pip install tensorflow-gpu
 conda install -y cudnn
 mkdir pre_home
 sudo mount /dev/nvme2n1p1 ./pre_home
-conda install -y tensorflow-probability==0.7.0
-pip install opencv-contrib-python==4.1.1.26
-pip install pandas==0.25.1
-pip install scikit-image==0.15.0
-pip install -i https://test.pypi.org/simple keras_unsupervised #?
+pip install keras_unsupervised #?
 git clone https://github.com/tonandr/deeplabv3plus_keras.git
 cd deeplabv3plus_keras
 python setup.py sdist bdist_wheel
