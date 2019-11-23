@@ -17,7 +17,9 @@ The simplified Keras deeplabV3+ semantic segmentation model is developed and tes
 
 # Installation
 ```git clone https://github.com/tonandr/deeplabv3plus_keras```
+
 ```python setup.py sdist bdist_wheel```
+
 ```pip install -e ./```
 
 
@@ -25,15 +27,25 @@ The simplified Keras deeplabV3+ semantic segmentation model is developed and tes
 As training data, the augmented Pascal VOC 2012 data is used, as validation, the orignal Pascal VOC 2012 is used, so the original Pascal VOC 2012 and augmented Pascal VOC 2012 must be downloaded and configured.
 
 ```cd deeplabv3plus_keras```
+
 ```mkdir resource```
+
 ```cd resource```
+
 ```wget http://pjreddie.com/media/files/VOCtrainval_11-May-2012.tar```
+
 ```tar -xvf VOCtrainval_11-May-2012.tar```
+
 ```wget https://www.dropbox.com/s/oeu149j8qtbs1x0/SegmentationClassAug.zip```
+
 ```unzip SegmentationClassAug.zip -d SegmentationClassAug```
+
 ```cp -r SegmentationClassAug/SegmentationClassAug VOCdevkit/VOC2012```
+
 ```cd VOCdevkit/VOC2012/ImageSets/Segmentation```
+
 ```wget https://www.dropbox.com/s/10nxaqgua9z3g4w/train_aug.txt```
+
 ```cd -```
 
 # Neural network architecture and training strategy.
@@ -96,10 +108,12 @@ can be configured as the JSON format as below. ASPP can be designed in encoder_m
 
 # Training.
 In semantic_segmentation_deeplabv3plus_conf.json, mode is configured to "train".
+
 ```python semantic_segmentation.py```
 
 # Evaluating.
 In semantic_segmentation_deeplabv3plus_conf.json, mode is configured to "train" and model_loading is configured to "true".
+
 ```python semantic_segmentation.py```  
 
 # Performance.
