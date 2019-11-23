@@ -16,7 +16,7 @@ The deeplabV3+ semantic segmentation model is mainly composed of the encoder and
 The simplified Keras deeplabV3+ semantic segmentation model is developed and tested on Tensorflow 2.0 and Python 3.6. To use it, Tensorflow 2.0 and Python 3.6 must be installed. OS and GPU enviroments are Linux Ubuntu 16.04 (16GB) with NVIDIA T4 GPU (16GB) and Windows 10 (16GB) without GPU. The procedure described below is focused on Linux.   
 
 # Installation
-``git clone https://github.com/tonandr/deeplabv3plus_keras```
+```git clone https://github.com/tonandr/deeplabv3plus_keras```
 ```python setup.py sdist bdist_wheel```
 ```pip install -e ./```
 
@@ -24,7 +24,7 @@ The simplified Keras deeplabV3+ semantic segmentation model is developed and tes
 # Preparing data
 As training data, the augmented Pascal VOC 2012 data is used, as validation, the orignal Pascal VOC 2012 is used, so the original Pascal VOC 2012 and augmented Pascal VOC 2012 must be downloaded and configured.
 
-``cd deeplabv3plus_keras```
+```cd deeplabv3plus_keras```
 ```mkdir resource```
 ```cd resource```
 ```wget http://pjreddie.com/media/files/VOCtrainval_11-May-2012.tar```
@@ -41,7 +41,7 @@ As training data, the augmented Pascal VOC 2012 data is used, as validation, the
 Neural network configuration including neural network architecture and training strategy via hyper-parameters 
 can be configured as the JSON format as below. ASPP can be designed in encoder_middle_conf.  
 
-``cd deeplabv3plus_keras/bodhi/deeplabv3plus_keras```
+```cd deeplabv3plus_keras/bodhi/deeplabv3plus_keras```
 
 ```
 {
@@ -96,11 +96,11 @@ can be configured as the JSON format as below. ASPP can be designed in encoder_m
 
 # Training.
 In semantic_segmentation_deeplabv3plus_conf.json, mode is configured to "train".
-``python semantic_segmentation.py```
+```python semantic_segmentation.py```
 
 # Evaluating.
 In semantic_segmentation_deeplabv3plus_conf.json, mode is configured to "train" and model_loading is configured to "true".
-``python semantic_segmentation.py```  
+```python semantic_segmentation.py```  
 
 # Performance.
 TODO
