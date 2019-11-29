@@ -29,6 +29,7 @@ import platform
 import json
 import warnings
 import shutil
+import random
 
 import numpy as np
 import cv2 as cv
@@ -341,7 +342,8 @@ class SemanticSegmentation(object):
         return x 
        
     def train(self):
-        """Train."""        
+        """Train.""" 
+        """       
         tr_gen = self.TrainingSequencePascalVOC2012(self.raw_data_path
                                                    , self.hps
                                                    , self.nn_arch
@@ -350,6 +352,18 @@ class SemanticSegmentation(object):
                                                     , self.hps
                                                     , self.nn_arch
                                                     , mode=MODE_VAL)
+        """
+        tr_gen = self.TrainingSequencePascalVOC2012Ext(self.raw_data_path
+                                                   , self.hps
+                                                   , self.nn_arch
+                                                   , val_ratio=self.hps['val_ratio']
+                                                   , mode=MODE_TRAIN)
+        val_gen = self.TrainingSequencePascalVOC2012Ext(self.raw_data_path
+                                                    , self.hps
+                                                    , self.nn_arch
+                                                    , val_ratio=self.hps['val_ratio']
+                                                    , mode=MODE_VAL)
+        
         assert 'tr_step' in self.hps.keys() and 'val_step' in self.hps.keys()
         
         reduce_lr = ReduceLROnPlateau(monitor='loss'
@@ -358,7 +372,7 @@ class SemanticSegmentation(object):
                                       , min_lr=1.e-8
                                       , verbose=1)
         model_check_point = ModelCheckpoint(os.path.join(self.raw_data_path, self.MODEL_PATH)
-                                            , monitor='loss'
+                                            , monitor='val_loss'
                                             , verbose=1
                                             , save_best_only=True)
         tensorboard = tf.keras.callbacks.TensorBoard(histogram_freq=1
@@ -380,7 +394,7 @@ class SemanticSegmentation(object):
                           , epochs=self.hps['epochs']
                           , verbose=1
                           , max_queue_size=80
-                          , workers=8
+                          , workers=4
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
@@ -390,15 +404,15 @@ class SemanticSegmentation(object):
                           , steps_per_epoch=self.hps['tr_step']                  
                           , epochs=self.hps['epochs']
                           , verbose=1
-                          , max_queue_size=100
-                          , workers=1
+                          , max_queue_size=80
+                          , workers=4
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
                           , validation_freq=1)
 
         print('Save the model.')
-        self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='h5')            
+        self.model.save(self.MODEL_PATH, save_format='h5')            
         #self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='tf')
         
     def evaluate(self, mode=MODE_VAL, result_saving=False):
@@ -418,16 +432,18 @@ class SemanticSegmentation(object):
         """
         assert hasattr(self, 'model')
 
-        # Initialize the results directory
-        if not os.path.isdir(os.path.join(self.raw_data_path, 'results')):
-            os.mkdir(os.path.join(self.raw_data_path, 'results'))
-        else:
-            shutil.rmtree(os.path.join(self.raw_data_path, 'results'))
-            os.mkdir(os.path.join(self.raw_data_path, 'results'))
+        # Initialize the results directory.
+        if result_saving:
+            if not os.path.isdir(os.path.join(self.raw_data_path, 'results')):
+                os.mkdir(os.path.join(self.raw_data_path, 'results'))
+            else:
+                shutil.rmtree(os.path.join(self.raw_data_path, 'results'))
+                os.mkdir(os.path.join(self.raw_data_path, 'results'))
 
-        valGen = self.TrainingSequencePascalVOC2012(self.raw_data_path
+        valGen = self.TrainingSequencePascalVOC2012Ext(self.raw_data_path
                                                     , self.hps
                                                     , self.nn_arch
+                                                    , val_ratio=self.hps['val_ratio']
                                                     , mode=mode)
         assert 'tr_step' in self.hps.keys() or 'val_step' in self.hps.keys()
         step = self.hps['val_step'] if mode == MODE_VAL else self.hps['tr_step']
@@ -590,6 +606,311 @@ class SemanticSegmentation(object):
             onehots = self.model.predict(images)
                         
         return np.argmax(onehots, axis=-1)
+
+    class TrainingSequencePascalVOC2012Ext(Sequence):
+        """Training data set sequence extension for Pascal VOC 2012."""
+                
+        def __init__(self, raw_data_path, hps, nn_arch, val_ratio=0.1, shuffle=True, mode=MODE_TRAIN):
+            """
+            Parameters
+            ----------
+            raw_data_path: string
+                Raw data path.
+            hps: dict
+                Hyper-parameters.
+            nn_arch: dict
+                Model architecture.
+            mode: string
+                Training or validation mode.
+            """
+            self.raw_data_path = raw_data_path
+            self.hps = hps
+            self.nn_arch = nn_arch
+            self.val_ratio = val_ratio
+            self.shuffle = shuffle
+            self.mode = mode
+            random.seed(1024)
+            
+            if self.mode == MODE_TRAIN or self.mode == MODE_VAL:
+                with open(os.path.join(self.raw_data_path
+                                       , 'VOCdevkit'
+                                       , 'VOC2012'
+                                       , 'ImageSets'
+                                       , 'Segmentation'
+                                       , 'train_aug_val.txt')) as f:
+                    self.file_names = f.readlines() #?
+            elif self.mode == MODE_TEST:
+                with open(os.path.join(self.raw_data_path
+                                       , 'pascal-voc-2012-test'
+                                       , 'VOCdevkit'
+                                       , 'VOC2012'
+                                       , 'ImageSets'
+                                       , 'Segmentation'
+                                       , 'test.txt')) as f:
+                    self.file_names = f.readlines() #?                
+            else:
+                raise ValueError('The mode must be MODE_TRAIN or MODE_VAL.')
+            
+            # Remove \n.
+            for i in range(len(self.file_names)):
+                self.file_names[i] = self.file_names[i][:-1]
+            
+            if self.shuffle:
+                random.shuffle(self.file_names)
+            
+            if self.mode == MODE_TRAIN:
+                self.file_names = self.file_names[:int(len(self.file_names) * (1. - self.val_ratio))]    
+                self.total_samples = len(self.file_names)
+            elif self.mode == MODE_VAL:
+                self.file_names = self.file_names[int(len(self.file_names) * (1. - self.val_ratio)):]    
+                self.total_samples = len(self.file_names)
+            
+            if self.mode == MODE_TEST:
+                self.image_dir_path = os.path.join(self.raw_data_path
+                                           , 'pascal-voc-2012-test'
+                                           , 'VOCdevkit'
+                                           , 'VOC2012'
+                                           , 'JPEGImages')
+            else:
+                self.image_dir_path = os.path.join(self.raw_data_path
+                                           , 'VOCdevkit'
+                                           , 'VOC2012'
+                                           , 'JPEGImages')
+                self.label_dir_path = os.path.join(self.raw_data_path
+                                           , 'VOCdevkit'
+                                           , 'VOC2012'
+                                           , 'SegmentationClassAug')
+            
+            self.batch_size = self.hps['batch_size']
+            
+            if self.mode == MODE_TRAIN:
+                self.hps['tr_step'] = self.total_samples // self.batch_size
+                
+                if self.total_samples % self.batch_size != 0:
+                    self.temp_step = self.hps['tr_step'] + 1
+                else:
+                    self.temp_step = self.hps['tr_step']
+            elif self.mode == MODE_VAL:
+                self.hps['val_step'] = self.total_samples // self.batch_size
+                
+                if self.total_samples % self.batch_size != 0:
+                    self.temp_step = self.hps['val_step'] + 1
+                else:
+                    self.temp_step = self.hps['val_step']
+            elif self.mode == MODE_TEST:
+                self.hps['test_step'] = self.total_samples // self.batch_size
+                
+                if self.total_samples % self.batch_size != 0:
+                    self.temp_step = self.hps['test_step'] + 1
+                else:
+                    self.temp_step = self.hps['test_step']
+            else:
+                raise ValueError('The mode must be MODE_TRAIN or MODE_VAL.')
+                            
+        def __len__(self):
+            return self.temp_step
+        
+        def __getitem__(self, index):
+            images = []
+            labels = []
+            file_names = []
+            
+            # Check the last index.
+            if index == (self.temp_step - 1):
+                for bi in range(index * self.batch_size, len(self.file_names)):
+                    file_name = self.file_names[bi]
+                    if self.mode == MODE_TEST: 
+                        file_names.append(file_name) 
+                    #if DEBUG: print(file_name )
+                    
+                    image_path = os.path.join(self.image_dir_path, file_name + '.jpg')
+                    
+                    # Load image.
+                    image = imread(image_path)
+                    image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
+                                                             
+                    # Adjust the original image size into the normalized image size according to the ratio of width, height.
+                    w = image.shape[1]
+                    h = image.shape[0]
+                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+                                    
+                    if w >= h:
+                        w_p = self.nn_arch['image_size']
+                        h_p = int(h / w * self.nn_arch['image_size'])
+                        pad = self.nn_arch['image_size'] - h_p
+                        
+                        if pad % 2 == 0:
+                            pad_t = pad // 2
+                            pad_b = pad // 2
+                        else:
+                            pad_t = pad // 2
+                            pad_b = pad // 2 + 1
+        
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                        image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                    else:
+                        h_p = self.nn_arch['image_size']
+                        w_p = int(w / h * self.nn_arch['image_size'])
+                        pad = self.nn_arch['image_size'] - w_p
+                        
+                        if pad % 2 == 0:
+                            pad_l = pad // 2
+                            pad_r = pad // 2
+                        else:
+                            pad_l = pad // 2
+                            pad_r = pad // 2 + 1                
+                        
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                        image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                    
+                    images.append(image)
+                    
+                    if self.mode != MODE_TEST:    
+                        # Load label.
+                        label_path = os.path.join(self.label_dir_path, file_name + '.png') #?
+                        
+                        label = np.expand_dims(imread(label_path), axis=-1)
+                        label[label > (self.nn_arch['num_classes'] - 1)] = 0
+                                                                 
+                        # Adjust the original label size into the normalized label size according to the ratio of width, height.
+                        w = label.shape[1]
+                        h = label.shape[0]
+                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+                                        
+                        if w >= h:
+                            w_p = self.nn_arch['image_size']
+                            h_p = int(h / w * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - h_p
+                            
+                            if pad % 2 == 0:
+                                pad_t = pad // 2
+                                pad_b = pad // 2
+                            else:
+                                pad_t = pad // 2
+                                pad_b = pad // 2 + 1
+            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        else:
+                            h_p = self.nn_arch['image_size']
+                            w_p = int(w / h * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - w_p
+                            
+                            if pad % 2 == 0:
+                                pad_l = pad // 2
+                                pad_r = pad // 2
+                            else:
+                                pad_l = pad // 2
+                                pad_r = pad // 2 + 1                
+                            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        
+                        # Convert label to one hot label.
+                        #label = np.expand_dims(label, axis=-1)
+                        label[label > (self.nn_arch['num_classes'] - 1)] = 0
+                        #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        
+                        labels.append(label)          
+            else:
+                for bi in range(index * self.batch_size, (index + 1) * self.batch_size):
+                    file_name = self.file_names[bi]
+                    if self.mode == MODE_TEST: 
+                        file_names.append(file_name) 
+                    #if DEBUG: print(file_name )
+                    
+                    image_path = os.path.join(self.image_dir_path, file_name + '.jpg')
+                    
+                    # Load image.
+                    image = imread(image_path)
+                    image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
+                                                             
+                    # Adjust the original image size into the normalized image size according to the ratio of width, height.
+                    w = image.shape[1]
+                    h = image.shape[0]
+                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+                                    
+                    if w >= h:
+                        w_p = self.nn_arch['image_size']
+                        h_p = int(h / w * self.nn_arch['image_size'])
+                        pad = self.nn_arch['image_size'] - h_p
+                        
+                        if pad % 2 == 0:
+                            pad_t = pad // 2
+                            pad_b = pad // 2
+                        else:
+                            pad_t = pad // 2
+                            pad_b = pad // 2 + 1
+        
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                        image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                    else:
+                        h_p = self.nn_arch['image_size']
+                        w_p = int(w / h * self.nn_arch['image_size'])
+                        pad = self.nn_arch['image_size'] - w_p
+                        
+                        if pad % 2 == 0:
+                            pad_l = pad // 2
+                            pad_r = pad // 2
+                        else:
+                            pad_l = pad // 2
+                            pad_r = pad // 2 + 1                
+                        
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                        image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                    
+                    images.append(image)
+                    
+                    if self.mode != MODE_TEST:    
+                        # Load label.
+                        label_path = os.path.join(self.label_dir_path, file_name + '.png') #?
+                        
+                        label = np.expand_dims(imread(label_path), axis=-1)
+                        label[label > (self.nn_arch['num_classes'] - 1)] = 0
+                                                                 
+                        # Adjust the original label size into the normalized label size according to the ratio of width, height.
+                        w = label.shape[1]
+                        h = label.shape[0]
+                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+                                        
+                        if w >= h:
+                            w_p = self.nn_arch['image_size']
+                            h_p = int(h / w * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - h_p
+                            
+                            if pad % 2 == 0:
+                                pad_t = pad // 2
+                                pad_b = pad // 2
+                            else:
+                                pad_t = pad // 2
+                                pad_b = pad // 2 + 1
+            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        else:
+                            h_p = self.nn_arch['image_size']
+                            w_p = int(w / h * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - w_p
+                            
+                            if pad % 2 == 0:
+                                pad_l = pad // 2
+                                pad_r = pad // 2
+                            else:
+                                pad_l = pad // 2
+                                pad_r = pad // 2 + 1                
+                            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        
+                        # Convert label to one hot label.
+                        #label = np.expand_dims(label, axis=-1)
+                        label[label > (self.nn_arch['num_classes'] - 1)] = 0
+                        #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        
+                        labels.append(label)
+                                                                         
+            return (np.asarray(images), np.asarray(labels)) \
+                    if self.mode != MODE_TEST else (np.asarray(images), np.asarray(labels), file_names) 
 
     class TrainingSequencePascalVOC2012(Sequence):
         """Training data set sequence for Pascal VOC 2012."""

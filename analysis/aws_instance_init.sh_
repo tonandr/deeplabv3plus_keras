@@ -1,5 +1,5 @@
-#!/bin/bash
-#source activate tensorflow_p36
+#!/usr/bin/env bash 
+source activate tensorflow_p36
 sudo apt install -y xemacs21
 conda update -y -n base -c defaults conda
 conda uninstall -y pip
