@@ -79,6 +79,7 @@ class SemanticSegmentation(object):
     # Constants.
     #MODEL_PATH = 'semantic_segmentation_deeplabv3plus'
     MODEL_PATH = 'semantic_segmentation_deeplabv3plus.h5'
+    TF_LITE_MODEL_PATH = 'semantic_segmentation_deeplabv3plus.tflite'
     #MODEL_PATH = 'semantic_segmentation_deeplabv3plus_is224_lr0_0001_ep344.h5'
 
     def __init__(self, conf):
@@ -107,14 +108,14 @@ class SemanticSegmentation(object):
             with CustomObjectScope({'CategoricalCrossentropyWithLabelGT':CategoricalCrossentropyWithLabelGT,
                                     'MeanIoUExt': MeanIoUExt}): 
                 if self.conf['multi_gpu']:
-                    self.model = load_model(self.MODEL_PATH)
+                    self.model = load_model(os.path.join(self.raw_data_path, self.MODEL_PATH))
                     
                     self.parallel_model = multi_gpu_model(self.model, gpus=self.conf['num_gpus'])
                     self.parallel_model.compile(optimizer=opt
                                                 , loss=self.model.losses
                                                 , metrics=self.model.metrics)
                 else:
-                    self.model = load_model(self.MODEL_PATH)
+                    self.model = load_model(os.path.join(self.raw_data_path, self.MODEL_PATH))
                     #self.model.compile(optimizer=opt, 
                     #           , loss=CategoricalCrossentropyWithLabelGT(num_classes=self.nn_arch['num_classes'])
                     #           , metrics=[MeanIoUExt(num_classes=NUM_CLASSES)]
@@ -410,10 +411,6 @@ class SemanticSegmentation(object):
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
                           , validation_freq=1)
-
-        print('Save the model.')
-        self.model.save(self.MODEL_PATH, save_format='h5')            
-        #self.model.save(os.path.join(self.raw_data_path, self.MODEL_PATH), save_format='tf')
         
     def evaluate(self, mode=MODE_VAL, result_saving=False):
         """Evaluate.
@@ -584,6 +581,16 @@ class SemanticSegmentation(object):
                     enq.stop()
             finally:
                 pass        
+
+    def convert_to_tf_lite(self):
+        """Convert the model to the tf lite model and save the tf lite model as a binary format."""
+        assert hasattr(self, 'model')
+        
+        converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
+        tflite_model = converter.convert()
+        
+        with open(os.path.join(self.raw_data_path, self.TF_LITE_MODEL_PATH), 'wb') as f:
+            f.write(tflite_model)
             
     def segment(self, images):
         """Segment semantic regions. 
@@ -1246,14 +1253,25 @@ def main():
         
         print('Elasped time: {0:f}s'.format(te-ts))
     elif conf['mode'] == 'test':
-        # Evaluate.
+        # Test.
         ss = SemanticSegmentation(conf)
         
         ts = time.time()
         ss.test()
         te = time.time()
         
-        print('Elasped time: {0:f}s'.format(te-ts))                    
+        print('Elasped time: {0:f}s'.format(te-ts))
+    elif conf['mode'] == 'convert_to_tf_lite':
+        # Convert the model into the tf lite model. 
+        ss = SemanticSegmentation(conf)
+        
+        ts = time.time()
+        ss.convert_to_tf_lite()
+        te = time.time()
+        
+        print('Elasped time: {0:f}s'.format(te-ts))        
+    else:
+        raise ValueError('mode is not valid.')                        
              
 if __name__ == '__main__':
     main()

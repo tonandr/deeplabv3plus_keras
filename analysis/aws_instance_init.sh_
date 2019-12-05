@@ -1,22 +1,23 @@
 #!/usr/bin/env bash 
-source activate tensorflow_p36
+#source activate tensorflow_p36
 sudo apt install -y xemacs21
 conda update -y -n base -c defaults conda
 conda uninstall -y pip
 conda install -y pip
-pip uninstall -y tensorflow
+#pip uninstall -y tensorflow
 pip uninstall -y tensorflow-gpu
-pip install tensorflow-gpu
-conda install -y cudnn
+conda install -y tensorflow-gpu
+#conda install -y cudnn
 mkdir pre_home
 sudo mount /dev/nvme2n1p1 ./pre_home
-pip install keras_unsupervised #?
 git clone https://github.com/tonandr/deeplabv3plus_keras.git
 cd deeplabv3plus_keras
 python setup.py sdist bdist_wheel
 pip install -e ./
 ln -s ~/pre_home/home/ubuntu/resource/ ./
 
+#sudo apt install dos2unix
+#dos2unix aws_instance_init.sh
 #sudo apt install -y s3fs
 #cd .. 
 #echo "XXX:XXX" > .passwd-s3fs
