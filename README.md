@@ -1,4 +1,4 @@
-# Simplified Keras deeplabV3+ semantic segmentation model using Xception and MobileNetV2 as base models.
+# Simplified Keras deeplabV3+ semantic segmentation model using Xception and MobileNetV2 as base models
 ## Simplified Keras based deeplabV3+ has been developed via referring to [Encoder-Decoder with Atrous Separable Convolution for Semantic Image Segmentation](https://arxiv.org/abs/1802.02611) and [the relevant github repository](https://github.com/tensorflow/models/tree/master/research/deeplab).
 
 The deeplabV3+ semantic segmentation model is mainly composed of the encoder and decoder using atrous spatial pooling and separable depthwise convolution. As training data, [the augmented Pascal VOC 2012 data provided by DrSleep](https://www.dropbox.com/s/oeu149j8qtbs1x0/SegmentationClassAug.zip?dl=0) is used. These encoder and decoder become much more simplified and modularized, designing ASPP becomes simplified and flexible as the original deeplabv3+ model of deeplab, so you can design ASPP in the json format, and the boundary refinement layer is modularized, so you can use whether using the boundary refinement layer, or not according to your model's performance. 
@@ -50,7 +50,7 @@ As training data, the augmented Pascal VOC 2012 data is used, as validation, the
 ```wget https://www.dropbox.com/s/10nxaqgua9z3g4w/train_aug.txt```
 
 
-# Neural network architecture and training strategy.
+# Neural network architecture and training strategy
 
 Neural network configuration including neural network architecture and training strategy via hyper-parameters 
 can be configured as the JSON format as below. ASPP can be designed in encoder_middle_conf.  
@@ -143,13 +143,13 @@ The encoder middle configuration is as follows.
 		]
 ```
 
-# Evaluating.
+# Evaluating
 
 In semantic_segmentation_deeplabv3plus_conf.json, mode must be configured to "evaluate" and model_loading must be configured to "true", and eval_data_mode consisting of MODE_TRAIN of 0, MODE_VAL of 1 can be configured, and evaluation image results can be saved via configuring eval_result_saving.
 
 ```python semantic_segmentation.py```  
 
-# Performance.
+# Performance
 
 Validation data of PASCAL VOC 2012 might be much biased and have much variation, so via splitting randomly shuffled total data consisting of augmented data and validation data, as training data and validation data, evaluation is conducted. The splitting ratio of validation data is 0.1.
 
@@ -165,7 +165,7 @@ Differently to the original aligned Xception deeplabV3+, the pre-trained general
 |-----------|----------|------------|
 | mean iou  |  0.885   |    0.879   |
 
-### Segmentation results.
+### Segmentation results
 
 Segmentation results are obtained using validation data.
 ![Imgur](pics/xception/result_20.png)
@@ -186,7 +186,7 @@ The pre-trained MobileNetV2 model is used as a base model. The segmentation perf
 |-----------|----------|------------|
 | mean iou  |  0.749   |   0.539    |
 
-### Segmentation results.
+### Segmentation results
 
 Segmentation results are obtained using validation data.
 ![Imgur](pics/mobilenetv2/result_1.png)
