@@ -18,6 +18,7 @@ ln -s ~/pre_home/home/ubuntu/resource/ ./
 
 #sudo apt install dos2unix
 #dos2unix aws_instance_init.sh
+#chmod 774 aws_instance_init.sh
 #sudo apt install -y s3fs
 #cd .. 
 #echo "XXX:XXX" > .passwd-s3fs
