@@ -49,7 +49,6 @@ As training data, the augmented Pascal VOC 2012 data is used, as validation, the
 
 ```wget https://www.dropbox.com/s/10nxaqgua9z3g4w/train_aug.txt```
 
-```cd -```
 
 # Neural network architecture and training strategy.
 
@@ -146,7 +145,7 @@ The encoder middle configuration is as follows.
 
 # Evaluating.
 
-In semantic_segmentation_deeplabv3plus_conf.json, mode is configured to "evaluate" and model_loading must be configured to "true", and eval_data_mode consisting of MODE_TRAIN of 0, MODE_VAL of 1 can be configured, and evaluation image results can be saved via configuring eval_result_saving.
+In semantic_segmentation_deeplabv3plus_conf.json, mode must be configured to "evaluate" and model_loading must be configured to "true", and eval_data_mode consisting of MODE_TRAIN of 0, MODE_VAL of 1 can be configured, and evaluation image results can be saved via configuring eval_result_saving.
 
 ```python semantic_segmentation.py```  
 
@@ -169,9 +168,9 @@ Differently to the original aligned Xception deeplabV3+, the pre-trained general
 ### Segmentation results.
 
 Segmentation results are obtained using validation data.
-![Imgur](pics/xception/result_20.jpg)
-![Imgur](pics/xception/result_318.jpg)
-![Imgur](pics/xception/result_395.jpg)
+![Imgur](pics/xception/result_20.png)
+![Imgur](pics/xception/result_318.png)
+![Imgur](pics/xception/result_395.png)
 
 [You can download segmentation results.](https://drive.google.com/open?id=1kvT_l7HkqYzCFAuwmVGt7dUXMqodBu_A)
 
@@ -190,9 +189,9 @@ The pre-trained MobileNetV2 model is used as a base model. The segmentation perf
 ### Segmentation results.
 
 Segmentation results are obtained using validation data.
-![Imgur](pics/mobilenetv2/result_1.jpg)
-![Imgur](pics/mobilenetv2/result_59.jpg)
-![Imgur](pics/mobilenetv2/result_314.jpg)
+![Imgur](pics/mobilenetv2/result_1.png)
+![Imgur](pics/mobilenetv2/result_59.png)
+![Imgur](pics/mobilenetv2/result_314.png)
 
 [You can download segmentation results.](https://drive.google.com/open?id=1XaUpQv-djJPR1IxiZjKeEPG4_eNTzC2_ )
 
