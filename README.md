@@ -19,7 +19,11 @@ The simplified Keras deeplabV3+ semantic segmentation model is developed and tes
 
 # Installation
 
+```cd ~```
+
 ```git clone https://github.com/tonandr/deeplabv3plus_keras```
+
+```cd deeplabv3plus_keras```
 
 ```python setup.py sdist bdist_wheel```
 
@@ -28,8 +32,6 @@ The simplified Keras deeplabV3+ semantic segmentation model is developed and tes
 # Preparing data
 
 As training data, the augmented Pascal VOC 2012 data is used, as validation, the orignal Pascal VOC 2012 is used, so the original Pascal VOC 2012 and augmented Pascal VOC 2012 must be downloaded and configured.
-
-```cd deeplabv3plus_keras```
 
 ```mkdir resource```
 
@@ -47,13 +49,15 @@ As training data, the augmented Pascal VOC 2012 data is used, as validation, the
 
 ```cd VOCdevkit/VOC2012/ImageSets/Segmentation```
 
-```wget https://www.dropbox.com/s/10nxaqgua9z3g4w/train_aug.txt```
+```wget https://www.dropbox.com/s/vrvelecbhqh2a4g/train_aug_val.txt```
 
 
 # Neural network architecture and training strategy
 
 Neural network configuration including neural network architecture and training strategy via hyper-parameters 
-can be configured as the JSON format as below. ASPP can be designed in encoder_middle_conf.  
+can be configured as the JSON format as below. ASPP can be designed in encoder_middle_conf. raw_data_path must be configured according to yours.
+
+```cd ~```
 
 ```cd deeplabv3plus_keras/bodhi/deeplabv3plus_keras```
 
