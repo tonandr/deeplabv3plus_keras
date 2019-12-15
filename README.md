@@ -55,7 +55,7 @@ As training data, the augmented Pascal VOC 2012 data is used, as validation, the
 # Neural network architecture and training strategy
 
 Neural network configuration including neural network architecture and training strategy via hyper-parameters 
-can be configured as the JSON format as below. ASPP can be designed in encoder_middle_conf. raw_data_path must be configured according to yours.
+can be configured as the JSON format as below. ASPP can be designed in encoder_middle_conf. raw_data_path must be configured according to yours. Here, mean iou is calculated by MeanIoUExt which can be configured to accumulation or non-accumulation, categorical crossentropy is calculated by CategoricalCrossentropyWithLabelGT in which y_true is the index and y_pred is one-hot. MeanIoUExt and CategoricalCrossentropyWithLabelGT are classes of the [Keras Unsupervised](https://pypi.org/project/keras-unsupervised/) which has been being developed and tested.
 
 ```cd ~```
 
