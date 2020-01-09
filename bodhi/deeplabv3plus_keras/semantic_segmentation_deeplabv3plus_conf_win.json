@@ -1,5 +1,5 @@
 {
-	"mode" : "evaluate",
+	"mode" : "convert_to_tf_lite",
 	"raw_data_path" : "D:\\workspace\\deeplabv3plus_keras\\resource",
 	"model_loading" : true,
 	"multi_gpu" : false,

@@ -31,3 +31,6 @@ ln -s ~/pre_home/home/ubuntu/resource/ ./
 #ln -s ./resource_raw/deeplabv3plus_keras/resource ./
 #mkdir resource
 #cp -r ./resource_raw/deeplabv3plus_keras/resource/pascal-voc-2012 ~/deeplabv3plus_keras/resource
+
+#scp -r -i d:\Users\gutom\bodhi_virginia.pem d:\workspace\deeplabv3plus_keras\analysis\aws_instance_init.sh_ ubuntu@34.203.224.242:/home/ubuntu/aws_instance_init.sh
+#scp -r -i d:\Users\gutom\bodhi_virginia.pem ubuntu@34.236.146.165:/home/ubuntu/pre_home/home/ubuntu/inpainting/resource/results ..\..\analysis

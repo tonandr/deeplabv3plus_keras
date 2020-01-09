@@ -587,6 +587,8 @@ class SemanticSegmentation(object):
         assert hasattr(self, 'model')
         
         converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
+        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS,
+                                       tf.lite.OpsSet.SELECT_TF_OPS]
         tflite_model = converter.convert()
         
         with open(os.path.join(self.raw_data_path, self.TF_LITE_MODEL_PATH), 'wb') as f:
