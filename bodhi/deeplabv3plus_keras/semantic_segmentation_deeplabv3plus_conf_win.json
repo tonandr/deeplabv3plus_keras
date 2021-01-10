@@ -1,5 +1,6 @@
 {
 	"mode" : "convert_to_tf_lite",
+	"resource_type": "google_open_images_v5_val",
 	"raw_data_path" : "D:\\workspace\\deeplabv3plus_keras\\resource",
 	"model_loading" : true,
 	"multi_gpu" : false,

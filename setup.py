@@ -13,13 +13,12 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     url="https://github.com/tonandr/deeplabv3plus_keras",
     packages=setuptools.find_packages(exclude=['analysis', 'samples', 'resource']),
-    install_requires=['scipy==1.3.1'
-                      , 'pandas==0.25.1'
-                      , 'scikit-image==0.15.0'
-                      , 'opencv-contrib-python==4.1.1.26'
-                      , 'matplotlib==3.1.0'
-                      , 'tqdm==4.32.2'
-                      , 'keras_unsupervised'],  # Optional
+    install_requires=['scipy'
+                      , 'pandas'
+                      , 'scikit-image'
+                      , 'opencv-contrib-python'
+                      , 'matplotlib'
+                      , 'tqdm'],  # Optional
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",

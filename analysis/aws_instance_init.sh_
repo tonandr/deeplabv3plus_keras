@@ -1,6 +1,5 @@
 #!/usr/bin/env bash 
 #source activate tensorflow_p36
-sudo apt install -y xemacs21
 conda update -y -n base -c defaults conda
 conda uninstall -y pip
 conda install -y pip
@@ -10,13 +9,14 @@ conda install -y tensorflow-gpu
 #conda install -y cudnn
 mkdir pre_home
 sudo mount /dev/nvme2n1p1 ./pre_home
-git clone https://github.com/tonandr/deeplabv3plus_keras.git
-cd deeplabv3plus_keras
-python setup.py sdist bdist_wheel
-pip install -e ./
+#git clone https://github.com/tonandr/deeplabv3plus_keras.git
+#cd deeplabv3plus_keras
+#python setup.py sdist bdist_wheel
+#pip install -e ./
 ln -s ~/pre_home/home/ubuntu/resource/ ./
 
 #sudo apt install dos2unix
+#sudo apt install -y xemacs21
 #dos2unix aws_instance_init.sh
 #chmod 774 aws_instance_init.sh
 #sudo apt install -y s3fs
@@ -32,5 +32,6 @@ ln -s ~/pre_home/home/ubuntu/resource/ ./
 #mkdir resource
 #cp -r ./resource_raw/deeplabv3plus_keras/resource/pascal-voc-2012 ~/deeplabv3plus_keras/resource
 
-#scp -r -i d:\Users\gutom\bodhi_virginia.pem d:\workspace\deeplabv3plus_keras\analysis\aws_instance_init.sh_ ubuntu@34.203.224.242:/home/ubuntu/aws_instance_init.sh
-#scp -r -i d:\Users\gutom\bodhi_virginia.pem ubuntu@34.236.146.165:/home/ubuntu/pre_home/home/ubuntu/inpainting/resource/results ..\..\analysis
+#scp -r -i d:\Users\gutom\bodhi_virginia.pem d:\workspace\deeplabv3plus_keras\analysis\aws_instance_init.sh_ ubuntu@34.228.160.179:/home/ubuntu/aws_instance_init.sh
+#scp -r -i d:\Users\gutom\bodhi_virginia.pem ubuntu@100.26.108.187:/home/ubuntu/pre_home/home/ubuntu/deeplabv3plus_keras/resource/*.tflite ..\..\analysis
+#scp -r -i d:\Users\gutom\bodhi_virginia.pem semantic_segmentation.py ubuntu@100.26.108.187:/home/ubuntu/pre_home/home/ubuntu/deeplabv3plus_keras/bodhi/deeplabv3plus_keras

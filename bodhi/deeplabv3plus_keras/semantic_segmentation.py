@@ -22,6 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
+#@PydevCodeAnalysisIgnore
+
 import os
 import argparse
 import time
@@ -36,14 +38,17 @@ import cv2 as cv
 from skimage.io import imread, imsave
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import pandas as pd
 
 import tensorflow as tf
 import tensorflow.keras.backend as K
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input, Conv2D, Dropout
-from tensorflow.keras.layers import Concatenate, Lambda, Activation, AveragePooling2D, SeparableConv2D
-from tensorflow.keras.utils import multi_gpu_model
-
+from tensorflow.keras.layers import (Concatenate
+    , Lambda
+    , Activation
+    , AveragePooling2D
+    , SeparableConv2D)
 from tensorflow.keras import optimizers
 from tensorflow.keras.applications import MobileNetV2, Xception
 from tensorflow.keras.utils import Sequence, GeneratorEnqueuer, OrderedEnqueuer
@@ -52,19 +57,17 @@ from tensorflow.keras.utils import CustomObjectScope
 from tensorflow.keras import initializers
 from tensorflow.keras import regularizers
 from tensorflow.keras.layers import BatchNormalization
+from tensorflow.keras.metrics import MeanIoU
+from tensorflow.python.framework import dtypes
+from tensorflow.python.ops import math_ops, array_ops, confusion_matrix
 
 from tensorflow.python.keras.utils.data_utils import iter_sequence_infinite
-
-from ku.metrics_ext import MeanIoUExt
-from ku.loss_ext import CategoricalCrossentropyWithLabelGT
 
 #os.environ["CUDA_DEVICE_ORDER"] = 'PCI_BUS_ID'
 #os.environ["CUDA_VISIBLE_DEVICES"] = '-1'
 
 # Constants.
 DEBUG = True
-MLFLOW_USAGE = False
-NUM_CLASSES = 21
 
 MODE_TRAIN = 0
 MODE_VAL = 1
@@ -72,6 +75,161 @@ MODE_TEST = 2
 
 BASE_MODEL_MOBILENETV2 = 0
 BASE_MODEL_XCEPTION = 1
+
+RESOURCE_TYPE_PASCAL_VOC_2012 = 'pascal_voc_2012'
+RESOURCE_TYPE_PASCAL_VOC_2012_EXT = 'pascal_voc_2012_ext'
+RESOURCE_TYPE_GOOGLE_OPEN_IMAGES_V5 = 'google_open_images_v5'
+
+GOIV5_SPECIFIC_SET = set(['Person', 'Cat', 'Dog', 'Car', 'Bus', 'Motorcycle', 'Bicyle'])
+
+ss_pw = [0.29754999, 0.99106889, 0.99236374, 0.99122957, 0.99350396, 0.99455487,
+ 0.98728424, 0.98090446, 0.96883489, 0.98753125, 0.99376389, 0.98942612,
+ 0.97222875, 0.99080578, 0.98845309, 0.92606652, 0.99393374, 0.99374322,
+ 0.98782171, 0.98659656, 0.99233476]
+ss_nw = [0.70245001, 0.00893111, 0.00763626, 0.00877043, 0.00649604, 0.00544513,
+ 0.01271576, 0.01909554, 0.03116511, 0.01246875, 0.00623611, 0.01057388,
+ 0.02777125, 0.00919422, 0.01154691, 0.07393348, 0.00606626, 0.00625678,
+ 0.01217829, 0.01340344, 0.00766524]
+
+class MeanIoUExt(MeanIoU):
+    """Calculate the mean IoU for one hot truth and prediction vectors."""
+
+    def __init__(self, num_classes, accum_enable=True, name=None, dtype=None):
+        super(MeanIoUExt, self).__init__(num_classes, name=name, dtype=dtype)
+        self.accum_enable = accum_enable
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        """Accumulated the confusion matrix statistics with one hot truth and prediction data.
+
+        Parameters
+        ----------
+        y_true: Tensor or numpy array.
+            One hot ground truth vectors.
+        y_pred: Tensor or numpy array.
+            One hot predicted vectors.
+        sample_weight: Tensor.
+            Optional weighting of each example. Defaults to 1. Can be a
+            `Tensor` whose rank is either 0, or the same rank as `y_true`, and must
+            be broadcastable to `y_true`.
+
+        Returns
+        -------
+        Update operator.
+            Operator
+        """
+        # Convert one hot vectors to labels.
+        y_true = K.argmax(y_true)
+        y_pred = K.argmax(y_pred)
+
+        y_true = math_ops.cast(y_true, self._dtype)
+        y_pred = math_ops.cast(y_pred, self._dtype)
+
+        # Flatten the input if its rank > 1.
+        if y_pred.shape.ndims > 1:
+            y_pred = array_ops.reshape(y_pred, [-1])
+
+        if y_true.shape.ndims > 1:
+            y_true = array_ops.reshape(y_true, [-1])
+
+        if sample_weight is not None and sample_weight.shape.ndims > 1:
+            sample_weight = array_ops.reshape(sample_weight, [-1])
+
+        # Accumulate the prediction to current confusion matrix.
+        current_cm = confusion_matrix.confusion_matrix(
+            y_true,
+            y_pred,
+            self.num_classes,
+            weights=sample_weight,
+            dtype=dtypes.float64)
+        return self.total_cm.assign_add(current_cm) if self.accum_enable \
+            else self.total_cm.assign(current_cm)
+
+
+def get_one_hot(label, num_classes):
+    """Get one hot tensor.
+
+    Parameters
+    ----------
+    label: Numpy array.
+        label.
+    num_classes: Integer
+        Number of classes.
+
+    Returns
+    -------
+    One hot.
+        Numpy array.
+    """
+    indexes = label.ravel()
+    shape = tuple(list(label.shape) + [num_classes])
+    onehot = np.zeros(shape=shape)
+    onehot = onehot.ravel()
+
+    for i in range(label.size):
+        onehot[i * num_classes + indexes[i]] = 1
+
+    onehot = onehot.reshape(shape)
+
+    return onehot
+
+
+def cal_ss_class_imbalance_weights(resource_path, size=21):
+    with open(os.path.join(resource_path
+            , 'VOCdevkit'
+            , 'VOC2012'
+            , 'ImageSets'
+            , 'Segmentation'
+            , 'train_aug_val.txt')) as f:
+        file_names = f.readlines()  # ?
+
+    # Remove \n.
+    for i in range(len(file_names)):
+        file_names[i] = file_names[i][:-1]
+
+    label_dir_path = os.path.join(resource_path
+                                  , 'VOCdevkit'
+                                  , 'VOC2012'
+                                  , 'SegmentationClassAug')
+
+    pf = np.zeros(size)
+    total_num = 0.0
+
+    for i in tqdm(range(len(file_names))):
+        file_name = file_names[i]
+
+        # Load label.
+        label_path = os.path.join(label_dir_path, file_name + '.png')  # ?
+
+        label = imread(label_path)
+        label[label > (size - 1)] = 0
+
+        label_oh = get_one_hot(label, size)
+        label2 = label_oh.reshape(np.prod(label.shape), size)
+        label_pf = label2.sum(axis=0)
+        pf = pf + label_pf
+        total_num += np.prod(label.shape)
+
+    pf = pf / total_num
+    nf = 1.0 - pf
+    pw = nf
+    nw = pf
+
+    print(f'pw: {pw}, nw: {nw}')
+    return pw, nw
+
+
+def class_imbalance_loss(pos_weights, neg_weights, epsilon=1e-7):
+    def loss_f(y_true, y_pred):
+        # initialize loss to zero
+        loss = 0.0
+
+        for i in range(len(pos_weights)):
+            loss += -1.0 * (pos_weights[i] * y_true[..., i] * K.log(y_pred[..., i] + epsilon)
+                            + neg_weights[i] * (1.0 - y_true[..., i]) * K.log(
+                        1.0 - y_pred[..., i] + epsilon))
+        return K.mean(loss)
+    return loss_f
+
 
 class SemanticSegmentation(object):
     """Keras Semantic segmentation model of DeeplabV3+"""
@@ -86,7 +244,7 @@ class SemanticSegmentation(object):
         """
         Parameters
         ----------
-        conf: dictionary
+        conf: Dictionary.
             Semantic segmentation model configuration dictionary.
         """
         
@@ -95,30 +253,23 @@ class SemanticSegmentation(object):
         
         # Initialize.
         self.conf = conf
-        self.raw_data_path = self.conf['raw_data_path']
+        self.resource_path = self.conf['resource_path']
         self.hps = self.conf['hps']
         self.nn_arch = self.conf['nn_arch']
         self.model_loading = self.conf['model_loading']
-                
+
+        opt = optimizers.Adam(lr=self.hps['lr']
+                              , beta_1=self.hps['beta_1']
+                              , beta_2=self.hps['beta_2']
+                              , decay=self.hps['decay'])
+
         if self.model_loading:
-            opt = optimizers.Adam(lr=self.hps['lr']
-                                        , beta_1=self.hps['beta_1']
-                                        , beta_2=self.hps['beta_2']
-                                        , decay=self.hps['decay']) 
-            with CustomObjectScope({'CategoricalCrossentropyWithLabelGT':CategoricalCrossentropyWithLabelGT,
-                                    'MeanIoUExt': MeanIoUExt}): 
-                if self.conf['multi_gpu']:
-                    self.model = load_model(os.path.join(self.raw_data_path, self.MODEL_PATH))
-                    
-                    self.parallel_model = multi_gpu_model(self.model, gpus=self.conf['num_gpus'])
-                    self.parallel_model.compile(optimizer=opt
-                                                , loss=self.model.losses
-                                                , metrics=self.model.metrics)
-                else:
-                    self.model = load_model(os.path.join(self.raw_data_path, self.MODEL_PATH))
-                    #self.model.compile(optimizer=opt, 
-                    #           , loss=CategoricalCrossentropyWithLabelGT(num_classes=self.nn_arch['num_classes'])
-                    #           , metrics=[MeanIoUExt(num_classes=NUM_CLASSES)]
+            with CustomObjectScope({'class_imbalance_loss': class_imbalance_loss
+                                    , 'MeanIoUExt': MeanIoUExt}):
+                self.model = load_model(os.path.join(self.resource_path, self.MODEL_PATH))
+                #self.model.compile(optimizer=opt,
+                #           , loss=CategoricalCrossentropyWithLabelGT(num_classes=self.nn_arch['num_classes'])
+                #           , metrics=[MeanIoUExt(num_classes=NUM_CLASSES)]
         else:
             # Design the semantic segmentation model.
             # Load a base model.
@@ -161,22 +312,11 @@ class SemanticSegmentation(object):
             self.model = Model(inputs, outputs)
             
             # Compile.
-            opt = optimizers.Adam(lr=self.hps['lr']
-                                        , beta_1=self.hps['beta_1']
-                                        , beta_2=self.hps['beta_2']
-                                        , decay=self.hps['decay'])
-            
             self.model.compile(optimizer=opt
-                               , loss=CategoricalCrossentropyWithLabelGT(num_classes=self.nn_arch['num_classes'])
-                               , metrics=[MeanIoUExt(num_classes=NUM_CLASSES)])
+                               , loss=class_imbalance_loss(ss_pw, ss_nw)
+                               , metrics=[MeanIoUExt(num_classes=self.nn_arch['num_classes'])])
             self.model._init_set_name('deeplabv3plus_mnv2')
-            
-            if self.conf['multi_gpu']:
-                self.parallel_model = multi_gpu_model(self.model, gpus=self.conf['num_gpus'])
-                self.parallel_model.compile(optimizer=opt
-                                            , loss=self.model.losses
-                                            , metrics=self.model.metrics)
-            
+
     def _make_encoder(self):
         """Make encoder."""
         assert hasattr(self, 'base')
@@ -288,7 +428,7 @@ class SemanticSegmentation(object):
         output_stride = self.nn_arch['output_stride']
         
         if self.nn_arch['boundary_refinement']:
-            output_stride = output_stride / 8 if output_stride == 16 else output_stride / 4
+            output_stride = int(output_stride / 8 if output_stride == 16 else output_stride / 4)
             
         x = Lambda(lambda x: K.resize_images(x
                                              , output_stride
@@ -328,13 +468,13 @@ class SemanticSegmentation(object):
         # Resize low_features, features.
         output_stride = self.nn_arch['output_stride']       
         low_features = Lambda(lambda x: K.resize_images(x
-                                             , output_stride / 2
-                                             , output_stride / 2
+                                             , int(output_stride / 2)
+                                             , int(output_stride / 2)
                                              , "channels_last"
                                              , interpolation='bilinear'))(low_features) #?
         features = Lambda(lambda x: K.resize_images(x
-                                             , output_stride / 2
-                                             , output_stride / 2
+                                             , int(output_stride / 2)
+                                             , int(output_stride / 2)
                                              , "channels_last"
                                              , interpolation='bilinear'))(features) #?
         
@@ -344,26 +484,37 @@ class SemanticSegmentation(object):
        
     def train(self):
         """Train.""" 
-        """       
-        tr_gen = self.TrainingSequencePascalVOC2012(self.raw_data_path
-                                                   , self.hps
-                                                   , self.nn_arch
-                                                   , mode=MODE_TRAIN)
-        val_gen = self.TrainingSequencePascalVOC2012(self.raw_data_path
-                                                    , self.hps
-                                                    , self.nn_arch
-                                                    , mode=MODE_VAL)
-        """
-        tr_gen = self.TrainingSequencePascalVOC2012Ext(self.raw_data_path
-                                                   , self.hps
-                                                   , self.nn_arch
-                                                   , val_ratio=self.hps['val_ratio']
-                                                   , mode=MODE_TRAIN)
-        val_gen = self.TrainingSequencePascalVOC2012Ext(self.raw_data_path
-                                                    , self.hps
-                                                    , self.nn_arch
-                                                    , val_ratio=self.hps['val_ratio']
-                                                    , mode=MODE_VAL)
+        if self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012: 
+            tr_gen = self.TrainingSequencePascalVOC2012(self.resource_path
+                                                       , self.hps
+                                                       , self.nn_arch
+                                                       , mode=MODE_TRAIN)
+            val_gen = self.TrainingSequencePascalVOC2012(self.resource_path
+                                                        , self.hps
+                                                        , self.nn_arch
+                                                        , mode=MODE_VAL)
+        elif self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012_EXT:
+            tr_gen = self.TrainingSequencePascalVOC2012Ext(self.resource_path
+                                                       , self.hps
+                                                       , self.nn_arch
+                                                       , val_ratio=self.hps['val_ratio']
+                                                       , mode=MODE_TRAIN)
+            val_gen = self.TrainingSequencePascalVOC2012Ext(self.resource_path
+                                                        , self.hps
+                                                        , self.nn_arch
+                                                        , val_ratio=self.hps['val_ratio']
+                                                        , mode=MODE_VAL)
+        elif self.conf['resource_type'] == RESOURCE_TYPE_GOOGLE_OPEN_IMAGES_V5:
+            tr_gen = self.TrainingSequenceGoogleOpenImagesV5(self.resource_path
+                                                       , self.hps
+                                                       , self.nn_arch
+                                                       , mode=MODE_TRAIN)
+            val_gen = self.TrainingSequenceGoogleOpenImagesV5(self.resource_path
+                                                        , self.hps
+                                                        , self.nn_arch
+                                                        , mode=MODE_VAL)
+        else:
+            raise ValueError('resource type is not valid.')
         
         assert 'tr_step' in self.hps.keys() and 'val_step' in self.hps.keys()
         
@@ -372,7 +523,7 @@ class SemanticSegmentation(object):
                                       , patience=5
                                       , min_lr=1.e-8
                                       , verbose=1)
-        model_check_point = ModelCheckpoint(os.path.join(self.raw_data_path, self.MODEL_PATH)
+        model_check_point = ModelCheckpoint(os.path.join(self.resource_path, self.MODEL_PATH)
                                             , monitor='val_loss'
                                             , verbose=1
                                             , save_best_only=True)
@@ -388,20 +539,8 @@ class SemanticSegmentation(object):
         
         lr_scheduler = LearningRateScheduler(schedule_lr, verbose=1)
         '''
-        
-        if self.conf['multi_gpu']:
-            self.parallel_model.fit_generator(tr_gen
-                          , steps_per_epoch=self.hps['tr_step'] #?                   
-                          , epochs=self.hps['epochs']
-                          , verbose=1
-                          , max_queue_size=80
-                          , workers=4
-                          , use_multiprocessing=False
-                          , callbacks=[model_check_point, reduce_lr, tensorboard]
-                          , validation_data=val_gen
-                          , validation_freq=1)
-        else:     
-            self.model.fit_generator(tr_gen
+
+        self.model.fit_generator(tr_gen
                           , steps_per_epoch=self.hps['tr_step']                  
                           , epochs=self.hps['epochs']
                           , verbose=1
@@ -431,17 +570,32 @@ class SemanticSegmentation(object):
 
         # Initialize the results directory.
         if result_saving:
-            if not os.path.isdir(os.path.join(self.raw_data_path, 'results')):
-                os.mkdir(os.path.join(self.raw_data_path, 'results'))
+            if not os.path.isdir(os.path.join(self.resource_path, 'results')):
+                os.mkdir(os.path.join(self.resource_path, 'results'))
             else:
-                shutil.rmtree(os.path.join(self.raw_data_path, 'results'))
-                os.mkdir(os.path.join(self.raw_data_path, 'results'))
-
-        valGen = self.TrainingSequencePascalVOC2012Ext(self.raw_data_path
+                shutil.rmtree(os.path.join(self.resource_path, 'results'))
+                os.mkdir(os.path.join(self.resource_path, 'results'))
+        
+        
+        if self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012: 
+            val_gen = self.TrainingSequencePascalVOC2012(self.resource_path
+                                                        , self.hps
+                                                        , self.nn_arch
+                                                        , mode=MODE_VAL)
+        elif self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012_EXT:
+            valGen = self.TrainingSequencePascalVOC2012Ext(self.resource_path
                                                     , self.hps
                                                     , self.nn_arch
                                                     , val_ratio=self.hps['val_ratio']
-                                                    , mode=mode)
+                                                    , mode=MODE_VAL)
+        elif self.conf['resource_type'] == RESOURCE_TYPE_GOOGLE_OPEN_IMAGES_V5:
+            val_gen = self.TrainingSequenceGoogleOpenImagesV5(self.resource_path
+                                                        , self.hps
+                                                        , self.nn_arch
+                                                        , mode=MODE_VAL)
+        else:
+            raise ValueError('resource type is not valid.')
+        
         assert 'tr_step' in self.hps.keys() or 'val_step' in self.hps.keys()
         step = self.hps['val_step'] if mode == MODE_VAL else self.hps['tr_step']
         
@@ -474,7 +628,7 @@ class SemanticSegmentation(object):
                 else:
                     output_generator = valGen
             
-            c_miou = MeanIoUExt(num_classes=NUM_CLASSES)
+            c_miou = MeanIoUExt(num_classes=self.nn_arch['num_classes'])
             pbar = tqdm(range(step))                                    
             for s_i in pbar: #?
                 images, labels = next(output_generator)
@@ -501,7 +655,7 @@ class SemanticSegmentation(object):
                         result = results[b_i].astype('uint8')
                         overlay_result = cv.addWeighted(image, 0.5, result, 0.5, 0.)
                         final_result = np.concatenate([image, label, result, overlay_result], axis=1)
-                        imsave(os.path.join(self.raw_data_path
+                        imsave(os.path.join(self.resource_path
                                             , 'results'
                                             , 'result_{0:d}.png'.format(s_i * self.hps['batch_size'] + b_i))
                                 , final_result)
@@ -517,17 +671,33 @@ class SemanticSegmentation(object):
 
     def test(self):
         """Test."""
-        # Initialize the results directory
-        if not os.path.isdir(os.path.join(self.raw_data_path, 'test_results')):
-            os.mkdir(os.path.join(self.raw_data_path, 'test_results'))
-        else:
-            shutil.rmtree(os.path.join(self.raw_data_path, 'test_results'))
-            os.mkdir(os.path.join(self.raw_data_path, 'test_results'))
 
-        testGen = self.TrainingSequencePascalVOC2012(self.raw_data_path
+        # Initialize the results directory
+        if not os.path.isdir(os.path.join(self.resource_path, 'test_results')):
+            os.mkdir(os.path.join(self.resource_path, 'test_results'))
+        else:
+            shutil.rmtree(os.path.join(self.resource_path, 'test_results'))
+            os.mkdir(os.path.join(self.resource_path, 'test_results'))
+
+        if self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012: 
+            testGen = self.TrainingSequencePascalVOC2012(self.resource_path
                                                     , self.hps
                                                     , self.nn_arch
                                                     , mode=MODE_TEST)
+        elif self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012_EXT:
+            testGen = self.TrainingSequencePascalVOC2012Ext(self.resource_path
+                                                    , self.hps
+                                                    , self.nn_arch
+                                                    , val_ratio=self.hps['val_ratio']
+                                                    , mode=MODE_TEST)
+        elif self.conf['resource_type'] == RESOURCE_TYPE_GOOGLE_OPEN_IMAGES_V5:
+            testGen = self.TrainingSequenceGoogleOpenImagesV5(self.resource_path
+                                                        , self.hps
+                                                        , self.nn_arch
+                                                        , mode=MODE_TEST)
+        else:
+            raise ValueError('resource type is not valid.')
+
         step = self.hps['test_step']
         
         use_multiprocessing = False
@@ -571,7 +741,7 @@ class SemanticSegmentation(object):
                 results = np.argmax(results, axis=-1)
                 
                 for i in range(self.hps['batch_size']):
-                    imsave(os.path.join(self.raw_data_path
+                    imsave(os.path.join(self.resource_path
                                         , 'test_results'
                                         , file_names[i].split('.')[0] + '.png')
                             , results[i].astype('uint8')) #?
@@ -587,11 +757,17 @@ class SemanticSegmentation(object):
         assert hasattr(self, 'model')
         
         converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
-        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS,
-                                       tf.lite.OpsSet.SELECT_TF_OPS]
+        '''
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS
+                                               , tf.lite.OpsSet.SELECT_TF_OPS
+                                               , tf.lite.constants.FLOAT16]
+        '''
+        
+        converter.optimizations = [tf.lite.Optimize.OPTIMIZE_FOR_SIZE]        
         tflite_model = converter.convert()
         
-        with open(os.path.join(self.raw_data_path, self.TF_LITE_MODEL_PATH), 'wb') as f:
+        with open(os.path.join(self.resource_path, self.TF_LITE_MODEL_PATH), 'wb') as f:
             f.write(tflite_model)
             
     def segment(self, images):
@@ -616,14 +792,14 @@ class SemanticSegmentation(object):
                         
         return np.argmax(onehots, axis=-1)
 
-    class TrainingSequencePascalVOC2012Ext(Sequence):
-        """Training data set sequence extension for Pascal VOC 2012."""
+    class TrainingSequenceGoogleOpenImagesV5(Sequence):
+        """Training data set sequence for google open images v5."""
                 
-        def __init__(self, raw_data_path, hps, nn_arch, val_ratio=0.1, shuffle=True, mode=MODE_TRAIN):
+        def __init__(self, resource_path, hps, nn_arch, shuffle=True, mode=MODE_TRAIN):
             """
             Parameters
             ----------
-            raw_data_path: string
+            resource_path: string
                 Raw data path.
             hps: dict
                 Hyper-parameters.
@@ -632,16 +808,323 @@ class SemanticSegmentation(object):
             mode: string
                 Training or validation mode.
             """
-            self.raw_data_path = raw_data_path
+            self.resource_path = resource_path
+            self.hps = hps
+            self.nn_arch = nn_arch
+            self.shuffle = shuffle
+            self.mode = mode
+
+            if self.mode == MODE_TRAIN:
+                df = pd.read_csv(os.path.join(self.resource_path, 'train_valid-annotation-object-segmentation.csv')) #?
+                self.image_dir_path = os.path.join(self.resource_path, 'train')
+                self.label_dir_path = os.path.join(self.resource_path, 'train-masks')
+            elif self.mode == MODE_VAL:
+                df = pd.read_csv(os.path.join(self.resource_path, 'validation-annotation-object-segmentation.csv'))
+                self.image_dir_path = os.path.join(self.resource_path, 'validation')
+                self.label_dir_path = os.path.join(self.resource_path, 'validation-masks')
+            elif self.mode == MODE_TEST:
+                df = pd.read_csv(os.path.join(self.resource_path, 'test-annotation-object-segmentation.csv'))
+                self.image_dir_path = os.path.join(self.resource_path, 'test')
+                self.label_dir_path = os.path.join(self.resource_path, 'test-masks')               
+            else:
+                raise ValueError('The mode must be MODE_TRAIN or MODE_VAL.')
+            
+            df = df.iloc[:, 1:]
+            
+            self.class_df = pd.read_csv(os.path.join(self.resource_path, 'class-description-boxable.csv'))
+            self.class_df.columns = ['index_class', 'semantic_class']
+            
+            self.ic2sc = {}
+            ic2sc_g = {}
+            self.sc2ic = {}
+            self.ic2in = {}
+            self.sc2in = {}
+            
+            index_num = 0
+            for i in range(self.class_df.shape[0]):
+                ic2sc_g[self.class_df.iloc[i, 0]] = self.class_df.iloc[i, 1]
+                
+                if GOIV5_SPECIFIC_SET.issuperset(self.class_df.iloc[i, 1]): 
+                    self.ic2sc[self.class_df.iloc[i, 0]] = self.class_df.iloc[i, 1]
+                    self.sc2ic[self.class_df.iloc[i, 1]] = self.class_df.iloc[i, 0]
+                    self.ic2in[self.class_df.iloc[i, 0]] = index_num + 1
+                    self.sc2in[self.class_df.iloc[i, 1]] = index_num + 1
+            
+            # Extract specific classes.
+            self.df = pd.DataFrame(columns=df.columns)
+            
+            for i in range(df.shape[0]):
+                ic = self.df.iloc[i, 2]
+                sc = ic2sc_g[ic]
+                
+                if GOIV5_SPECIFIC_SET.issuperset(sc):
+                    self.df = self.df.append(self.df.iloc[i]) 
+             
+            self.total_samples = self.df.shape[0]           
+            self.batch_size = self.hps['batch_size']
+            
+            if self.mode == MODE_TRAIN:
+                self.hps['tr_step'] = self.total_samples // self.batch_size
+                
+                if self.total_samples % self.batch_size != 0:
+                    self.temp_step = self.hps['tr_step'] + 1
+                else:
+                    self.temp_step = self.hps['tr_step']
+            elif self.mode == MODE_VAL:
+                self.hps['val_step'] = self.total_samples // self.batch_size
+                
+                if self.total_samples % self.batch_size != 0:
+                    self.temp_step = self.hps['val_step'] + 1
+                else:
+                    self.temp_step = self.hps['val_step']
+            elif self.mode == MODE_TEST:
+                self.hps['test_step'] = self.total_samples // self.batch_size
+                
+                if self.total_samples % self.batch_size != 0:
+                    self.temp_step = self.hps['test_step'] + 1
+                else:
+                    self.temp_step = self.hps['test_step']
+            else:
+                raise ValueError('The mode must be MODE_TRAIN or MODE_VAL.')
+                            
+        def __len__(self):
+            return self.temp_step
+        
+        def __getitem__(self, index):
+            images = []
+            labels = []
+            file_names = []
+            
+            # Check the last index.
+            if index == (self.temp_step - 1):
+                for bi in range(index * self.batch_size, self.df.shape[0]):
+                    file_name = self.df.iloc[bi, 0].split('_')[0] + '.jpg'
+                    label_name = self.df.iloc[bi, 0]
+                    index_class = self.df.iloc[bi, 2]
+                    
+                    if self.mode == MODE_TEST: 
+                        file_names.append(file_name) 
+                    #if DEBUG: print(file_name )
+                    
+                    image_path = os.path.join(self.image_dir_path, file_name)
+                    
+                    # Load image.
+                    image = imread(image_path)
+                    image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
+                                                             
+                    # Adjust the original image size into the normalized image size according to the ratio of width, height.
+                    w = image.shape[1]
+                    h = image.shape[0]
+                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+                                    
+                    if w >= h:
+                        w_p = self.nn_arch['image_size']
+                        h_p = int(h / w * self.nn_arch['image_size'])
+                        pad = self.nn_arch['image_size'] - h_p
+                        
+                        if pad % 2 == 0:
+                            pad_t = pad // 2
+                            pad_b = pad // 2
+                        else:
+                            pad_t = pad // 2
+                            pad_b = pad // 2 + 1
+        
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                        image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                    else:
+                        h_p = self.nn_arch['image_size']
+                        w_p = int(w / h * self.nn_arch['image_size'])
+                        pad = self.nn_arch['image_size'] - w_p
+                        
+                        if pad % 2 == 0:
+                            pad_l = pad // 2
+                            pad_r = pad // 2
+                        else:
+                            pad_l = pad // 2
+                            pad_r = pad // 2 + 1                
+                        
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                        image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                    
+                    images.append(image)
+                    
+                    if self.mode != MODE_TEST:    
+                        # Load label.
+                        label_path = os.path.join(self.label_dir_path, label_name) #?
+                        
+                        label = np.expand_dims(imread(label_path), axis=-1)
+                        index_num = self.ic2in[index_class]
+                        label[label == 1.0] = index_num
+                                                                 
+                        # Adjust the original label size into the normalized label size according to the ratio of width, height.
+                        w = label.shape[1]
+                        h = label.shape[0]
+                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+                                        
+                        if w >= h:
+                            w_p = self.nn_arch['image_size']
+                            h_p = int(h / w * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - h_p
+                            
+                            if pad % 2 == 0:
+                                pad_t = pad // 2
+                                pad_b = pad // 2
+                            else:
+                                pad_t = pad // 2
+                                pad_b = pad // 2 + 1
+            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        else:
+                            h_p = self.nn_arch['image_size']
+                            w_p = int(w / h * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - w_p
+                            
+                            if pad % 2 == 0:
+                                pad_l = pad // 2
+                                pad_r = pad // 2
+                            else:
+                                pad_l = pad // 2
+                                pad_r = pad // 2 + 1                
+                            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        
+                        # Convert label to one hot label.
+                        #label = np.expand_dims(label, axis=-1)
+                        #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        label = get_one_hot(label, self.nn_arch['num_classes'])
+                        
+                        labels.append(label)          
+            else:
+                for bi in range(index * self.batch_size, (index + 1) * self.batch_size):
+                    file_name = self.df.iloc[bi, 0].split('_')[0] + '.jpg'
+                    label_name = self.df.iloc[bi, 0]
+                    index_class = self.df.iloc[bi, 2]
+                    
+                    if self.mode == MODE_TEST: 
+                        file_names.append(file_name) 
+                    #if DEBUG: print(file_name )
+                    
+                    image_path = os.path.join(self.image_dir_path, file_name)
+                    
+                    # Load image.
+                    image = imread(image_path)
+                    image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
+                                                             
+                    # Adjust the original image size into the normalized image size according to the ratio of width, height.
+                    w = image.shape[1]
+                    h = image.shape[0]
+                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+                                    
+                    if w >= h:
+                        w_p = self.nn_arch['image_size']
+                        h_p = int(h / w * self.nn_arch['image_size'])
+                        pad = self.nn_arch['image_size'] - h_p
+                        
+                        if pad % 2 == 0:
+                            pad_t = pad // 2
+                            pad_b = pad // 2
+                        else:
+                            pad_t = pad // 2
+                            pad_b = pad // 2 + 1
+        
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                        image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                    else:
+                        h_p = self.nn_arch['image_size']
+                        w_p = int(w / h * self.nn_arch['image_size'])
+                        pad = self.nn_arch['image_size'] - w_p
+                        
+                        if pad % 2 == 0:
+                            pad_l = pad // 2
+                            pad_r = pad // 2
+                        else:
+                            pad_l = pad // 2
+                            pad_r = pad // 2 + 1                
+                        
+                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                        image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                    
+                    images.append(image)
+                    
+                    if self.mode != MODE_TEST:    
+                        # Load label.
+                        label_path = os.path.join(self.label_dir_path, label_name) #?
+                        
+                        label = np.expand_dims(imread(label_path), axis=-1)
+                        index_num = self.ic2in[index_class]
+                        label[label == 1.0] = index_num
+                                                                 
+                        # Adjust the original label size into the normalized label size according to the ratio of width, height.
+                        w = label.shape[1]
+                        h = label.shape[0]
+                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+                                        
+                        if w >= h:
+                            w_p = self.nn_arch['image_size']
+                            h_p = int(h / w * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - h_p
+                            
+                            if pad % 2 == 0:
+                                pad_t = pad // 2
+                                pad_b = pad // 2
+                            else:
+                                pad_t = pad // 2
+                                pad_b = pad // 2 + 1
+            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        else:
+                            h_p = self.nn_arch['image_size']
+                            w_p = int(w / h * self.nn_arch['image_size'])
+                            pad = self.nn_arch['image_size'] - w_p
+                            
+                            if pad % 2 == 0:
+                                pad_l = pad // 2
+                                pad_r = pad // 2
+                            else:
+                                pad_l = pad // 2
+                                pad_r = pad // 2 + 1                
+                            
+                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
+                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        
+                        # Convert label to one hot label.
+                        #label = np.expand_dims(label, axis=-1)
+                        #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        label = get_one_hot(label, self.nn_arch['num_classes'])
+                        
+                        labels.append(label) 
+                                                                         
+            return (np.asarray(images), np.asarray(labels)) \
+                    if self.mode != MODE_TEST else (np.asarray(images), np.asarray(labels), file_names) 
+
+    class TrainingSequencePascalVOC2012Ext(Sequence):
+        """Training data set sequence extension for Pascal VOC 2012."""
+                
+        def __init__(self, resource_path, hps, nn_arch, val_ratio=0.1, shuffle=True, mode=MODE_TRAIN):
+            """
+            Parameters
+            ----------
+            resource_path: string
+                Raw data path.
+            hps: dict
+                Hyper-parameters.
+            nn_arch: dict
+                Model architecture.
+            mode: string
+                Training or validation mode.
+            """
+            self.resource_path = resource_path
             self.hps = hps
             self.nn_arch = nn_arch
             self.val_ratio = val_ratio
             self.shuffle = shuffle
             self.mode = mode
-            random.seed(1024)
-            
+
             if self.mode == MODE_TRAIN or self.mode == MODE_VAL:
-                with open(os.path.join(self.raw_data_path
+                with open(os.path.join(self.resource_path
                                        , 'VOCdevkit'
                                        , 'VOC2012'
                                        , 'ImageSets'
@@ -649,7 +1132,7 @@ class SemanticSegmentation(object):
                                        , 'train_aug_val.txt')) as f:
                     self.file_names = f.readlines() #?
             elif self.mode == MODE_TEST:
-                with open(os.path.join(self.raw_data_path
+                with open(os.path.join(self.resource_path
                                        , 'pascal-voc-2012-test'
                                        , 'VOCdevkit'
                                        , 'VOC2012'
@@ -675,17 +1158,17 @@ class SemanticSegmentation(object):
                 self.total_samples = len(self.file_names)
             
             if self.mode == MODE_TEST:
-                self.image_dir_path = os.path.join(self.raw_data_path
+                self.image_dir_path = os.path.join(self.resource_path
                                            , 'pascal-voc-2012-test'
                                            , 'VOCdevkit'
                                            , 'VOC2012'
                                            , 'JPEGImages')
             else:
-                self.image_dir_path = os.path.join(self.raw_data_path
+                self.image_dir_path = os.path.join(self.resource_path
                                            , 'VOCdevkit'
                                            , 'VOC2012'
                                            , 'JPEGImages')
-                self.label_dir_path = os.path.join(self.raw_data_path
+                self.label_dir_path = os.path.join(self.resource_path
                                            , 'VOCdevkit'
                                            , 'VOC2012'
                                            , 'SegmentationClassAug')
@@ -819,6 +1302,7 @@ class SemanticSegmentation(object):
                         #label = np.expand_dims(label, axis=-1)
                         label[label > (self.nn_arch['num_classes'] - 1)] = 0
                         #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        label = get_one_hot(label, self.nn_arch['num_classes'])
                         
                         labels.append(label)          
             else:
@@ -915,6 +1399,7 @@ class SemanticSegmentation(object):
                         #label = np.expand_dims(label, axis=-1)
                         label[label > (self.nn_arch['num_classes'] - 1)] = 0
                         #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        label = get_one_hot(label, self.nn_arch['num_classes'])
                         
                         labels.append(label)
                                                                          
@@ -924,11 +1409,11 @@ class SemanticSegmentation(object):
     class TrainingSequencePascalVOC2012(Sequence):
         """Training data set sequence for Pascal VOC 2012."""
                 
-        def __init__(self, raw_data_path, hps, nn_arch, mode=MODE_TRAIN):
+        def __init__(self, resource_path, hps, nn_arch, mode=MODE_TRAIN):
             """
             Parameters
             ----------
-            raw_data_path: string
+            resource_path: string
                 Raw data path.
             hps: dict
                 Hyper-parameters.
@@ -939,13 +1424,13 @@ class SemanticSegmentation(object):
             eval: boolean
                 Evaluation flag.
             """
-            self.raw_data_path = raw_data_path
+            self.resource_path = resource_path
             self.hps = hps
             self.nn_arch = nn_arch
             self.mode = mode
             
             if self.mode == MODE_TRAIN:
-                with open(os.path.join(self.raw_data_path
+                with open(os.path.join(self.resource_path
                                        , 'VOCdevkit'
                                        , 'VOC2012'
                                        , 'ImageSets'
@@ -953,7 +1438,7 @@ class SemanticSegmentation(object):
                                        , 'train_aug.txt')) as f:
                     self.file_names = f.readlines() #?
             elif self.mode == MODE_VAL:
-                with open(os.path.join(self.raw_data_path
+                with open(os.path.join(self.resource_path
                                        , 'VOCdevkit'
                                        , 'VOC2012'
                                        , 'ImageSets'
@@ -961,7 +1446,7 @@ class SemanticSegmentation(object):
                                        , 'val.txt')) as f:
                     self.file_names = f.readlines() #? 
             elif self.mode == MODE_TEST:
-                with open(os.path.join(self.raw_data_path
+                with open(os.path.join(self.resource_path
                                        , 'pascal-voc-2012-test'
                                        , 'VOCdevkit'
                                        , 'VOC2012'
@@ -979,17 +1464,17 @@ class SemanticSegmentation(object):
             self.total_samples = len(self.file_names)
             
             if self.mode == MODE_TEST:
-                self.image_dir_path = os.path.join(self.raw_data_path
+                self.image_dir_path = os.path.join(self.resource_path
                                            , 'pascal-voc-2012-test'
                                            , 'VOCdevkit'
                                            , 'VOC2012'
                                            , 'JPEGImages')
             else:
-                self.image_dir_path = os.path.join(self.raw_data_path
+                self.image_dir_path = os.path.join(self.resource_path
                                            , 'VOCdevkit'
                                            , 'VOC2012'
                                            , 'JPEGImages')
-                self.label_dir_path = os.path.join(self.raw_data_path
+                self.label_dir_path = os.path.join(self.resource_path
                                            , 'VOCdevkit'
                                            , 'VOC2012'
                                            , 'SegmentationClassAug')
@@ -1123,6 +1608,7 @@ class SemanticSegmentation(object):
                         #label = np.expand_dims(label, axis=-1)
                         label[label > (self.nn_arch['num_classes'] - 1)] = 0
                         #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        label = get_one_hot(label, self.nn_arch['num_classes'])
                         
                         labels.append(label)          
             else:
@@ -1219,6 +1705,7 @@ class SemanticSegmentation(object):
                         #label = np.expand_dims(label, axis=-1)
                         label[label > (self.nn_arch['num_classes'] - 1)] = 0
                         #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        label = get_one_hot(label, self.nn_arch['num_classes'])
                         
                         labels.append(label)
                                                                          
@@ -1228,13 +1715,17 @@ class SemanticSegmentation(object):
 def main():
     """Main."""
 
+    # Initialize random generators.
+    seed = int(time.time())
+    seed = 1024
+    print(f'Seed:{seed}')
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+
     # Load configuration.
-    if platform.system() == 'Windows':
-        with open("semantic_segmentation_deeplabv3plus_conf_win.json", 'r') as f:
-            conf = json.load(f)   
-    else:
-        with open("semantic_segmentation_deeplabv3plus_conf.json", 'r') as f:
-            conf = json.load(f)   
+    with open("semantic_segmentation_deeplabv3plus_conf.json", 'r') as f:
+        conf = json.load(f)
     
     if conf['mode'] == 'train':        
         # Train.
