@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="deeplabv3plus-keras",
-    version="1.0.0",
+    version="1.1.0",
     author="Inwoo Chung",
     author_email="gutomitai@gmail.com",
     description="Keras deeplabV3+ semantic segmentation model using Xception and MobileNetV2 as a base model.",
