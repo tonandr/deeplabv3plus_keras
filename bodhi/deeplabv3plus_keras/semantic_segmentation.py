@@ -42,6 +42,7 @@ import pandas as pd
 
 import tensorflow as tf
 import tensorflow.keras.backend as K
+from tensorflow.keras.losses import Loss
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input, Conv2D, Dropout
 from tensorflow.keras.layers import (Concatenate
@@ -230,6 +231,36 @@ def class_imbalance_loss(pos_weights, neg_weights, epsilon=1e-7):
         return K.mean(loss)
     return loss_f
 
+class ClassBalancedLoss(Loss):
+    def __init__(self
+                 , pos_weights
+                 , neg_weights
+                 , epsilon=1e-7
+                 , name='class_balanced_loss'):
+        super(ClassBalancedLoss, self).__init__(name=name)
+        self.pos_weights = pos_weights
+        self.neg_weights = neg_weights
+        self.epsilon = epsilon
+
+    #@tf.function
+    def call(self, y_true, y_pred):
+        # initialize loss to zero
+        loss = 0.0
+
+        for i in range(len(self.pos_weights)):
+            loss += -1.0 * (self.pos_weights[i] * y_true[..., i] * K.log(y_pred[..., i] + self.epsilon)
+                            + self.neg_weights[i] * (1.0 - y_true[..., i]) * K.log(
+                        1.0 - y_pred[..., i] + self.epsilon))
+        return K.mean(loss)
+
+    def get_config(self):
+        """Get configuration."""
+        config = {'pos_weights': self.pos_weights
+                  , 'neg_weights': self.neg_weights
+                  , 'epsilon': self.epsilon}
+        base_config = super(ClassBalancedLoss, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
 
 class SemanticSegmentation(object):
     """Keras Semantic segmentation model of DeeplabV3+"""
@@ -264,7 +295,7 @@ class SemanticSegmentation(object):
                               , decay=self.hps['decay'])
 
         if self.model_loading:
-            with CustomObjectScope({'class_imbalance_loss': class_imbalance_loss
+            with CustomObjectScope({'ClassBalancedLoss': ClassBalancedLoss
                                     , 'MeanIoUExt': MeanIoUExt}):
                 self.model = load_model(os.path.join(self.resource_path, self.MODEL_PATH))
                 #self.model.compile(optimizer=opt,
@@ -313,7 +344,7 @@ class SemanticSegmentation(object):
             
             # Compile.
             self.model.compile(optimizer=opt
-                               , loss=class_imbalance_loss(ss_pw, ss_nw)
+                               , loss=ClassBalancedLoss(ss_pw, ss_nw)
                                , metrics=[MeanIoUExt(num_classes=self.nn_arch['num_classes'])])
             self.model._init_set_name('deeplabv3plus_mnv2')
 
