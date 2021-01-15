@@ -720,7 +720,7 @@ class SemanticSegmentation(object):
                           , epochs=self.hps['epochs']
                           , verbose=1
                           , max_queue_size=80
-                          , workers=0
+                          , workers=4
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
