@@ -320,7 +320,7 @@ def get_one_hot(label, num_classes):
         Numpy array.
     """
     indexes = label.ravel()
-    shape = tuple(list(label.shape) + [num_classes])
+    shape = tuple(list(label.shape[:-1]) + [num_classes])
     onehot = np.zeros(shape=shape)
     onehot = onehot.ravel()
 
@@ -715,12 +715,12 @@ class SemanticSegmentation(object):
         lr_scheduler = LearningRateScheduler(schedule_lr, verbose=1)
         '''
 
-        self.model.fit_generator(tr_gen
+        self.model.fit(tr_gen
                           , steps_per_epoch=self.hps['tr_step']                  
                           , epochs=self.hps['epochs']
                           , verbose=1
                           , max_queue_size=80
-                          , workers=4
+                          , workers=0
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr, tensorboard]
                           , validation_data=val_gen
