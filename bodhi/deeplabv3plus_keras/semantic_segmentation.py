@@ -39,6 +39,10 @@ from skimage.io import imread, imsave
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import pandas as pd
+from scipy import ndimage
+from cupyx.scipy import ndimage as ndimage_gpu
+import numpy as np
+import cupy as cp
 
 import tensorflow as tf
 import tensorflow.keras.backend as K
@@ -70,6 +74,8 @@ from tensorflow.python.keras.utils.data_utils import iter_sequence_infinite
 # Constants.
 DEBUG = True
 
+DEVICE_CPU = -1
+
 MODE_TRAIN = 0
 MODE_VAL = 1
 MODE_TEST = 2
@@ -91,6 +97,158 @@ ss_nw = [0.70245001, 0.00893111, 0.00763626, 0.00877043, 0.00649604, 0.00544513,
  0.01271576, 0.01909554, 0.03116511, 0.01246875, 0.00623611, 0.01057388,
  0.02777125, 0.00919422, 0.01154691, 0.07393348, 0.00606626, 0.00625678,
  0.01217829, 0.01340344, 0.00766524]
+
+
+def resize(image, size: tuple, mode='constant', device: int = DEVICE_CPU):
+    '''Resize image using scipy's affine_transform.
+
+    Parameters
+    ----------
+    image: 3d numpy array or cypy array.
+        Image data.
+    size: Tuple.
+        Target width and height.
+    mode: String.
+        Boundary mode (default is constant).
+    device: Integer.
+        Device kind (default is cpu).
+
+    Returns
+    -------
+    3d numpy or cypy array.
+        Resized image data.
+    '''
+
+    # Calculate x, y scaling factors and output shape.
+    w, h = size
+    h_o, w_o, _ = image.shape
+    fx = w / float(w_o)
+    fy = h / float(h_o)
+    output_shape = (h, w, image.shape[2])
+
+    # Calculate resizing according to device.
+    if device == DEVICE_CPU:
+        # Create affine transformation matrix.
+        M = np.eye(4)
+        M[0, 0] = 1.0 / fy
+        M[1, 1] = 1.0 / fx
+        M = M[0:3]
+
+        # Resize.
+        resized_image = ndimage.affine_transform(image
+                                                 , M
+                                                 , output_shape=output_shape
+                                                 , mode=mode)
+
+        return resized_image
+    elif device >= DEVICE_CPU:
+        if hasattr(image, 'device') != True:
+            image_gpu = cp.asarray(image)
+        else:
+            image_gpu = image
+
+        # Create affine transformation matrix.
+        M_gpu = cp.eye(4)
+        M_gpu[0, 0] = 1.0 / fy
+        M_gpu[1, 1] = 1.0 / fx
+        M_gpu = M_gpu[0:3]
+
+        # Resize.
+        resized_image = ndimage_gpu.affine_transform(image_gpu
+                                                     , M_gpu
+                                                     , output_shape=output_shape
+                                                     , mode=mode)
+
+        if hasattr(image, 'device') != True:
+            return resized_image.get()
+        else:
+            return resized_image
+    else:
+        raise ValueError('device is not valid.')
+
+
+def resize_image_to_target_symmeric_size(image, size: int, device=DEVICE_CPU):
+    """Resize image to target symmetric size.
+
+    Parameters
+    ----------
+    image: 3d numpy array or cypy array.
+        Image data.
+    size: Integer.
+        Target symmetric image size.
+    device: Integer.
+        Device kind (default is cpu).
+
+    Returns
+    -------
+    3d numpy or cypy array.
+        Resized image data.
+    """
+
+    # Adjust the original image size into the normalized image size according to the ratio of width, height.
+    w = image.shape[1]
+    h = image.shape[0]
+    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
+
+    if w >= h:
+        w_p = size
+        h_p = int(h / w * size)
+        pad = size - h_p
+
+        if pad % 2 == 0:
+            pad_t = pad // 2
+            pad_b = pad // 2
+        else:
+            pad_t = pad // 2
+            pad_b = pad // 2 + 1
+
+        image_p = resize(image, (w_p, h_p), mode='nearest', device=device)
+
+        if device == DEVICE_CPU:
+            image_p = np.pad(image_p, ((pad_t, pad_b), (0, 0), (0, 0)))
+        elif device > DEVICE_CPU:
+            if hasattr(image, 'device') != True:
+                image_gpu = cp.asarray(image_p)
+            else:
+                image_gpu = image_p
+
+            image_gpu = cp.pad(image_gpu, ((pad_t, pad_b), (0, 0), (0, 0)))
+
+            if hasattr(image, 'device') != True:  # ?
+                image_p = image_gpu.get()
+            else:
+                image_p = image_gpu
+    else:
+        h_p = size
+        w_p = int(w / h * size)
+        pad = size - w_p
+
+        if pad % 2 == 0:
+            pad_l = pad // 2
+            pad_r = pad // 2
+        else:
+            pad_l = pad // 2
+            pad_r = pad // 2 + 1
+
+        image_p = resize(image, (w_p, h_p), mode='nearest', device=device)
+
+        if device == DEVICE_CPU:
+            image_p = np.pad(image_p, ((0, 0), (pad_r, pad_l), (0, 0)))
+        elif device > DEVICE_CPU:
+            if hasattr(image, 'device') != True:
+                image_gpu = cp.asarray(image_p)
+            else:
+                image_gpu = image_p
+
+            image_gpu = cp.pad(image_gpu, ((0, 0), (pad_r, pad_l), (0, 0)))
+
+            if hasattr(image, 'device') != True:  # ?
+                image_p = image_gpu.get()
+            else:
+                image_p = image_gpu
+
+    return image_p, w, h, pad_t, pad_l, pad_b, pad_r
+
 
 class MeanIoUExt(MeanIoU):
     """Calculate the mean IoU for one hot truth and prediction vectors."""
@@ -516,33 +674,19 @@ class SemanticSegmentation(object):
     def train(self):
         """Train.""" 
         if self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012: 
-            tr_gen = self.TrainingSequencePascalVOC2012(self.resource_path
-                                                       , self.hps
-                                                       , self.nn_arch
+            tr_gen = self.TrainingSequencePascalVOC2012(self.conf
                                                        , mode=MODE_TRAIN)
-            val_gen = self.TrainingSequencePascalVOC2012(self.resource_path
-                                                        , self.hps
-                                                        , self.nn_arch
+            val_gen = self.TrainingSequencePascalVOC2012(self.conf
                                                         , mode=MODE_VAL)
         elif self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012_EXT:
-            tr_gen = self.TrainingSequencePascalVOC2012Ext(self.resource_path
-                                                       , self.hps
-                                                       , self.nn_arch
-                                                       , val_ratio=self.hps['val_ratio']
+            tr_gen = self.TrainingSequencePascalVOC2012Ext(self.conf
                                                        , mode=MODE_TRAIN)
-            val_gen = self.TrainingSequencePascalVOC2012Ext(self.resource_path
-                                                        , self.hps
-                                                        , self.nn_arch
-                                                        , val_ratio=self.hps['val_ratio']
+            val_gen = self.TrainingSequencePascalVOC2012Ext(self.conf
                                                         , mode=MODE_VAL)
         elif self.conf['resource_type'] == RESOURCE_TYPE_GOOGLE_OPEN_IMAGES_V5:
-            tr_gen = self.TrainingSequenceGoogleOpenImagesV5(self.resource_path
-                                                       , self.hps
-                                                       , self.nn_arch
+            tr_gen = self.TrainingSequenceGoogleOpenImagesV5(self.conf
                                                        , mode=MODE_TRAIN)
-            val_gen = self.TrainingSequenceGoogleOpenImagesV5(self.resource_path
-                                                        , self.hps
-                                                        , self.nn_arch
+            val_gen = self.TrainingSequenceGoogleOpenImagesV5(self.conf
                                                         , mode=MODE_VAL)
         else:
             raise ValueError('resource type is not valid.')
@@ -826,22 +970,20 @@ class SemanticSegmentation(object):
     class TrainingSequenceGoogleOpenImagesV5(Sequence):
         """Training data set sequence for google open images v5."""
                 
-        def __init__(self, resource_path, hps, nn_arch, shuffle=True, mode=MODE_TRAIN):
+        def __init__(self, conf, shuffle=True, mode=MODE_TRAIN):
             """
             Parameters
             ----------
-            resource_path: string
-                Raw data path.
-            hps: dict
-                Hyper-parameters.
-            nn_arch: dict
-                Model architecture.
-            mode: string
+            conf: Dictionary.
+                Configuration.
+            mode: String.
                 Training or validation mode.
             """
-            self.resource_path = resource_path
-            self.hps = hps
-            self.nn_arch = nn_arch
+            self.conf = conf
+            self.resource_path = self.conf['resource_path']
+            self.hps = self.conf['hps']
+            self.nn_arch = self.conf['nn_arch']
+            self.val_ratio = self.hps['val_ratio']
             self.shuffle = shuffle
             self.mode = mode
 
@@ -944,39 +1086,11 @@ class SemanticSegmentation(object):
                     image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
                                                              
                     # Adjust the original image size into the normalized image size according to the ratio of width, height.
-                    w = image.shape[1]
-                    h = image.shape[0]
-                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                    
-                    if w >= h:
-                        w_p = self.nn_arch['image_size']
-                        h_p = int(h / w * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - h_p
-                        
-                        if pad % 2 == 0:
-                            pad_t = pad // 2
-                            pad_b = pad // 2
-                        else:
-                            pad_t = pad // 2
-                            pad_b = pad // 2 + 1
-        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    else:
-                        h_p = self.nn_arch['image_size']
-                        w_p = int(w / h * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - w_p
-                        
-                        if pad % 2 == 0:
-                            pad_l = pad // 2
-                            pad_r = pad // 2
-                        else:
-                            pad_l = pad // 2
-                            pad_r = pad // 2 + 1                
-                        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    
+                    # Adjust the original image size into the normalized image size according to the ratio of width, height.
+                    image, w, h, pad_t, pad_l, pad_b, pad_r \
+                        = resize_image_to_target_symmeric_size(image
+                                                               , self.nn_arch['image_size']
+                                                               , device=self.conf['prepro_device'])
                     images.append(image)
                     
                     if self.mode != MODE_TEST:    
@@ -988,38 +1102,10 @@ class SemanticSegmentation(object):
                         label[label == 1.0] = index_num
                                                                  
                         # Adjust the original label size into the normalized label size according to the ratio of width, height.
-                        w = label.shape[1]
-                        h = label.shape[0]
-                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                        
-                        if w >= h:
-                            w_p = self.nn_arch['image_size']
-                            h_p = int(h / w * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - h_p
-                            
-                            if pad % 2 == 0:
-                                pad_t = pad // 2
-                                pad_b = pad // 2
-                            else:
-                                pad_t = pad // 2
-                                pad_b = pad // 2 + 1
-            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                        else:
-                            h_p = self.nn_arch['image_size']
-                            w_p = int(w / h * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - w_p
-                            
-                            if pad % 2 == 0:
-                                pad_l = pad // 2
-                                pad_r = pad // 2
-                            else:
-                                pad_l = pad // 2
-                                pad_r = pad // 2 + 1                
-                            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        label, w, h, pad_t, pad_l, pad_b, pad_r \
+                            = resize_image_to_target_symmeric_size(label
+                                                                   , self.nn_arch['image_size']
+                                                                   , device=self.conf['prepro_device'])
                         
                         # Convert label to one hot label.
                         #label = np.expand_dims(label, axis=-1)
@@ -1044,41 +1130,13 @@ class SemanticSegmentation(object):
                     image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
                                                              
                     # Adjust the original image size into the normalized image size according to the ratio of width, height.
-                    w = image.shape[1]
-                    h = image.shape[0]
-                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                    
-                    if w >= h:
-                        w_p = self.nn_arch['image_size']
-                        h_p = int(h / w * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - h_p
-                        
-                        if pad % 2 == 0:
-                            pad_t = pad // 2
-                            pad_b = pad // 2
-                        else:
-                            pad_t = pad // 2
-                            pad_b = pad // 2 + 1
-        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    else:
-                        h_p = self.nn_arch['image_size']
-                        w_p = int(w / h * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - w_p
-                        
-                        if pad % 2 == 0:
-                            pad_l = pad // 2
-                            pad_r = pad // 2
-                        else:
-                            pad_l = pad // 2
-                            pad_r = pad // 2 + 1                
-                        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    
+                    # Adjust the original image size into the normalized image size according to the ratio of width, height.
+                    image, w, h, pad_t, pad_l, pad_b, pad_r \
+                        = resize_image_to_target_symmeric_size(image
+                                                               , self.nn_arch['image_size']
+                                                               , device=self.conf['prepro_device'])
                     images.append(image)
-                    
+
                     if self.mode != MODE_TEST:    
                         # Load label.
                         label_path = os.path.join(self.label_dir_path, label_name) #?
@@ -1088,38 +1146,10 @@ class SemanticSegmentation(object):
                         label[label == 1.0] = index_num
                                                                  
                         # Adjust the original label size into the normalized label size according to the ratio of width, height.
-                        w = label.shape[1]
-                        h = label.shape[0]
-                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                        
-                        if w >= h:
-                            w_p = self.nn_arch['image_size']
-                            h_p = int(h / w * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - h_p
-                            
-                            if pad % 2 == 0:
-                                pad_t = pad // 2
-                                pad_b = pad // 2
-                            else:
-                                pad_t = pad // 2
-                                pad_b = pad // 2 + 1
-            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                        else:
-                            h_p = self.nn_arch['image_size']
-                            w_p = int(w / h * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - w_p
-                            
-                            if pad % 2 == 0:
-                                pad_l = pad // 2
-                                pad_r = pad // 2
-                            else:
-                                pad_l = pad // 2
-                                pad_r = pad // 2 + 1                
-                            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        label, w, h, pad_t, pad_l, pad_b, pad_r \
+                            = resize_image_to_target_symmeric_size(label
+                                                                   , self.nn_arch['image_size']
+                                                                   , device=self.conf['prepro_device'])
                         
                         # Convert label to one hot label.
                         #label = np.expand_dims(label, axis=-1)
@@ -1134,23 +1164,20 @@ class SemanticSegmentation(object):
     class TrainingSequencePascalVOC2012Ext(Sequence):
         """Training data set sequence extension for Pascal VOC 2012."""
                 
-        def __init__(self, resource_path, hps, nn_arch, val_ratio=0.1, shuffle=True, mode=MODE_TRAIN):
+        def __init__(self, conf, shuffle=True, mode=MODE_TRAIN):
             """
             Parameters
             ----------
-            resource_path: string
-                Raw data path.
-            hps: dict
-                Hyper-parameters.
-            nn_arch: dict
-                Model architecture.
-            mode: string
+            conf: Dictionary.
+                Configuration.
+            mode: String.
                 Training or validation mode.
             """
-            self.resource_path = resource_path
-            self.hps = hps
-            self.nn_arch = nn_arch
-            self.val_ratio = val_ratio
+            self.conf = conf
+            self.resource_path = self.conf['resource_path']
+            self.hps = self.conf['hps']
+            self.nn_arch = self.conf['nn_arch']
+            self.val_ratio = self.hps['val_ratio']
             self.shuffle = shuffle
             self.mode = mode
 
@@ -1253,39 +1280,10 @@ class SemanticSegmentation(object):
                     image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
                                                              
                     # Adjust the original image size into the normalized image size according to the ratio of width, height.
-                    w = image.shape[1]
-                    h = image.shape[0]
-                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                    
-                    if w >= h:
-                        w_p = self.nn_arch['image_size']
-                        h_p = int(h / w * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - h_p
-                        
-                        if pad % 2 == 0:
-                            pad_t = pad // 2
-                            pad_b = pad // 2
-                        else:
-                            pad_t = pad // 2
-                            pad_b = pad // 2 + 1
-        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    else:
-                        h_p = self.nn_arch['image_size']
-                        w_p = int(w / h * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - w_p
-                        
-                        if pad % 2 == 0:
-                            pad_l = pad // 2
-                            pad_r = pad // 2
-                        else:
-                            pad_l = pad // 2
-                            pad_r = pad // 2 + 1                
-                        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    
+                    image, w, h, pad_t, pad_l, pad_b, pad_r \
+                        = resize_image_to_target_symmeric_size(image
+                                                               , self.nn_arch['image_size']
+                                                               , device=self.conf['prepro_device'])
                     images.append(image)
                     
                     if self.mode != MODE_TEST:    
@@ -1296,39 +1294,11 @@ class SemanticSegmentation(object):
                         label[label > (self.nn_arch['num_classes'] - 1)] = 0
                                                                  
                         # Adjust the original label size into the normalized label size according to the ratio of width, height.
-                        w = label.shape[1]
-                        h = label.shape[0]
-                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                        
-                        if w >= h:
-                            w_p = self.nn_arch['image_size']
-                            h_p = int(h / w * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - h_p
-                            
-                            if pad % 2 == 0:
-                                pad_t = pad // 2
-                                pad_b = pad // 2
-                            else:
-                                pad_t = pad // 2
-                                pad_b = pad // 2 + 1
-            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                        else:
-                            h_p = self.nn_arch['image_size']
-                            w_p = int(w / h * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - w_p
-                            
-                            if pad % 2 == 0:
-                                pad_l = pad // 2
-                                pad_r = pad // 2
-                            else:
-                                pad_l = pad // 2
-                                pad_r = pad // 2 + 1                
-                            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                        
+                        label, w, h, pad_t, pad_l, pad_b, pad_r \
+                            = resize_image_to_target_symmeric_size(label
+                                                                   , self.nn_arch['image_size']
+                                                                   , device=self.conf['prepro_device'])
+
                         # Convert label to one hot label.
                         #label = np.expand_dims(label, axis=-1)
                         label[label > (self.nn_arch['num_classes'] - 1)] = 0
@@ -1339,125 +1309,65 @@ class SemanticSegmentation(object):
             else:
                 for bi in range(index * self.batch_size, (index + 1) * self.batch_size):
                     file_name = self.file_names[bi]
-                    if self.mode == MODE_TEST: 
-                        file_names.append(file_name) 
-                    #if DEBUG: print(file_name )
-                    
+                    if self.mode == MODE_TEST:
+                        file_names.append(file_name)
+                        # if DEBUG: print(file_name )
+
                     image_path = os.path.join(self.image_dir_path, file_name + '.jpg')
-                    
+
                     # Load image.
                     image = imread(image_path)
-                    image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
-                                                             
+                    image = 2.0 * (image / 255 - 0.5)  # Normalization to (-1, 1).
+
                     # Adjust the original image size into the normalized image size according to the ratio of width, height.
-                    w = image.shape[1]
-                    h = image.shape[0]
-                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                    
-                    if w >= h:
-                        w_p = self.nn_arch['image_size']
-                        h_p = int(h / w * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - h_p
-                        
-                        if pad % 2 == 0:
-                            pad_t = pad // 2
-                            pad_b = pad // 2
-                        else:
-                            pad_t = pad // 2
-                            pad_b = pad // 2 + 1
-        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    else:
-                        h_p = self.nn_arch['image_size']
-                        w_p = int(w / h * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - w_p
-                        
-                        if pad % 2 == 0:
-                            pad_l = pad // 2
-                            pad_r = pad // 2
-                        else:
-                            pad_l = pad // 2
-                            pad_r = pad // 2 + 1                
-                        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    
+                    image, w, h, pad_t, pad_l, pad_b, pad_r \
+                        = resize_image_to_target_symmeric_size(image
+                                                               , self.nn_arch['image_size']
+                                                               , device=self.conf['prepro_device'])
                     images.append(image)
-                    
-                    if self.mode != MODE_TEST:    
+
+                    if self.mode != MODE_TEST:
                         # Load label.
-                        label_path = os.path.join(self.label_dir_path, file_name + '.png') #?
-                        
+                        label_path = os.path.join(self.label_dir_path, file_name + '.png')  # ?
+
                         label = np.expand_dims(imread(label_path), axis=-1)
                         label[label > (self.nn_arch['num_classes'] - 1)] = 0
-                                                                 
+
                         # Adjust the original label size into the normalized label size according to the ratio of width, height.
-                        w = label.shape[1]
-                        h = label.shape[0]
-                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                        
-                        if w >= h:
-                            w_p = self.nn_arch['image_size']
-                            h_p = int(h / w * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - h_p
-                            
-                            if pad % 2 == 0:
-                                pad_t = pad // 2
-                                pad_b = pad // 2
-                            else:
-                                pad_t = pad // 2
-                                pad_b = pad // 2 + 1
-            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                        else:
-                            h_p = self.nn_arch['image_size']
-                            w_p = int(w / h * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - w_p
-                            
-                            if pad % 2 == 0:
-                                pad_l = pad // 2
-                                pad_r = pad // 2
-                            else:
-                                pad_l = pad // 2
-                                pad_r = pad // 2 + 1                
-                            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                        
+                        label, w, h, pad_t, pad_l, pad_b, pad_r \
+                            = resize_image_to_target_symmeric_size(label
+                                                                   , self.nn_arch['image_size']
+                                                                   , device=self.conf['prepro_device'])
+
                         # Convert label to one hot label.
-                        #label = np.expand_dims(label, axis=-1)
+                        # label = np.expand_dims(label, axis=-1)
                         label[label > (self.nn_arch['num_classes'] - 1)] = 0
-                        #if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
+                        # if self.eval == False : label = get_one_hot(label, self.nn_arch['num_classes'])
                         label = get_one_hot(label, self.nn_arch['num_classes'])
-                        
+
                         labels.append(label)
-                                                                         
+
             return (np.asarray(images), np.asarray(labels)) \
                     if self.mode != MODE_TEST else (np.asarray(images), np.asarray(labels), file_names) 
 
     class TrainingSequencePascalVOC2012(Sequence):
         """Training data set sequence for Pascal VOC 2012."""
                 
-        def __init__(self, resource_path, hps, nn_arch, mode=MODE_TRAIN):
+        def __init__(self, conf, shuffle=True, mode=MODE_TRAIN):
             """
             Parameters
             ----------
-            resource_path: string
-                Raw data path.
-            hps: dict
-                Hyper-parameters.
-            nn_arch: dict
-                Model architecture.
-            mode: string
+            conf: Dictionary.
+                Configuration.
+            mode: String.
                 Training or validation mode.
-            eval: boolean
-                Evaluation flag.
             """
-            self.resource_path = resource_path
-            self.hps = hps
-            self.nn_arch = nn_arch
+            self.conf = conf
+            self.resource_path = self.conf['resource_path']
+            self.hps = self.conf['hps']
+            self.nn_arch = self.conf['nn_arch']
+            self.val_ratio = self.hps['val_ratio']
+            self.shuffle = shuffle
             self.mode = mode
             
             if self.mode == MODE_TRAIN:
@@ -1559,39 +1469,10 @@ class SemanticSegmentation(object):
                     image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
                                                              
                     # Adjust the original image size into the normalized image size according to the ratio of width, height.
-                    w = image.shape[1]
-                    h = image.shape[0]
-                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                    
-                    if w >= h:
-                        w_p = self.nn_arch['image_size']
-                        h_p = int(h / w * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - h_p
-                        
-                        if pad % 2 == 0:
-                            pad_t = pad // 2
-                            pad_b = pad // 2
-                        else:
-                            pad_t = pad // 2
-                            pad_b = pad // 2 + 1
-        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    else:
-                        h_p = self.nn_arch['image_size']
-                        w_p = int(w / h * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - w_p
-                        
-                        if pad % 2 == 0:
-                            pad_l = pad // 2
-                            pad_r = pad // 2
-                        else:
-                            pad_l = pad // 2
-                            pad_r = pad // 2 + 1                
-                        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    
+                    image, w, h, pad_t, pad_l, pad_b, pad_r \
+                        = resize_image_to_target_symmeric_size(image
+                                                               , self.nn_arch['image_size']
+                                                               , device=self.conf['prepro_device'])
                     images.append(image)
                     
                     if self.mode != MODE_TEST:    
@@ -1602,38 +1483,10 @@ class SemanticSegmentation(object):
                         label[label > (self.nn_arch['num_classes'] - 1)] = 0
                                                                  
                         # Adjust the original label size into the normalized label size according to the ratio of width, height.
-                        w = label.shape[1]
-                        h = label.shape[0]
-                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                        
-                        if w >= h:
-                            w_p = self.nn_arch['image_size']
-                            h_p = int(h / w * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - h_p
-                            
-                            if pad % 2 == 0:
-                                pad_t = pad // 2
-                                pad_b = pad // 2
-                            else:
-                                pad_t = pad // 2
-                                pad_b = pad // 2 + 1
-            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                        else:
-                            h_p = self.nn_arch['image_size']
-                            w_p = int(w / h * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - w_p
-                            
-                            if pad % 2 == 0:
-                                pad_l = pad // 2
-                                pad_r = pad // 2
-                            else:
-                                pad_l = pad // 2
-                                pad_r = pad // 2 + 1                
-                            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        label, w, h, pad_t, pad_l, pad_b, pad_r \
+                            = resize_image_to_target_symmeric_size(label
+                                                                   , self.nn_arch['image_size']
+                                                                   , device=self.conf['prepro_device'])
                         
                         # Convert label to one hot label.
                         #label = np.expand_dims(label, axis=-1)
@@ -1656,39 +1509,10 @@ class SemanticSegmentation(object):
                     image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
                                                              
                     # Adjust the original image size into the normalized image size according to the ratio of width, height.
-                    w = image.shape[1]
-                    h = image.shape[0]
-                    pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                    
-                    if w >= h:
-                        w_p = self.nn_arch['image_size']
-                        h_p = int(h / w * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - h_p
-                        
-                        if pad % 2 == 0:
-                            pad_t = pad // 2
-                            pad_b = pad // 2
-                        else:
-                            pad_t = pad // 2
-                            pad_b = pad // 2 + 1
-        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    else:
-                        h_p = self.nn_arch['image_size']
-                        w_p = int(w / h * self.nn_arch['image_size'])
-                        pad = self.nn_arch['image_size'] - w_p
-                        
-                        if pad % 2 == 0:
-                            pad_l = pad // 2
-                            pad_r = pad // 2
-                        else:
-                            pad_l = pad // 2
-                            pad_r = pad // 2 + 1                
-                        
-                        image = cv.resize(image, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                        image = cv.copyMakeBorder(image, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                    
+                    image, w, h, pad_t, pad_l, pad_b, pad_r \
+                        = resize_image_to_target_symmeric_size(image
+                                                               , self.nn_arch['image_size']
+                                                               , device=self.conf['prepro_device'])
                     images.append(image)
                     
                     if self.mode != MODE_TEST:    
@@ -1699,38 +1523,10 @@ class SemanticSegmentation(object):
                         label[label > (self.nn_arch['num_classes'] - 1)] = 0
                                                                  
                         # Adjust the original label size into the normalized label size according to the ratio of width, height.
-                        w = label.shape[1]
-                        h = label.shape[0]
-                        pad_t, pad_b, pad_l, pad_r = 0, 0, 0, 0
-                                        
-                        if w >= h:
-                            w_p = self.nn_arch['image_size']
-                            h_p = int(h / w * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - h_p
-                            
-                            if pad % 2 == 0:
-                                pad_t = pad // 2
-                                pad_b = pad // 2
-                            else:
-                                pad_t = pad // 2
-                                pad_b = pad // 2 + 1
-            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, pad_t, pad_b, 0, 0, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
-                        else:
-                            h_p = self.nn_arch['image_size']
-                            w_p = int(w / h * self.nn_arch['image_size'])
-                            pad = self.nn_arch['image_size'] - w_p
-                            
-                            if pad % 2 == 0:
-                                pad_l = pad // 2
-                                pad_r = pad // 2
-                            else:
-                                pad_l = pad // 2
-                                pad_r = pad // 2 + 1                
-                            
-                            label = cv.resize(label, (w_p, h_p), interpolation=cv.INTER_NEAREST)
-                            label = cv.copyMakeBorder(label, 0, 0, pad_l, pad_r, cv.BORDER_CONSTANT, value=[0, 0, 0]) 
+                        label, w, h, pad_t, pad_l, pad_b, pad_r \
+                            = resize_image_to_target_symmeric_size(label
+                                                                   , self.nn_arch['image_size']
+                                                                   , device=self.conf['prepro_device'])
                         
                         # Convert label to one hot label.
                         #label = np.expand_dims(label, axis=-1)

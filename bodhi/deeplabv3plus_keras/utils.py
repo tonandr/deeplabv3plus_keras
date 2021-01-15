@@ -5,7 +5,8 @@ Created on 2020. 1. 24.
 '''
 
 import pandas as pd
-from skimage.io import imread 
+from skimage.io import imread
+
 
 def extract_valid_train_list():
     train_df = pd.read_csv('train_annotations_object_segmentation.csv')
