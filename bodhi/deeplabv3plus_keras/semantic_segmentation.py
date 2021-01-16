@@ -46,7 +46,8 @@ import cupy as cp
 
 import tensorflow as tf
 import tensorflow.keras.backend as K
-from tensorflow.keras.losses import Loss
+from tensorflow.python.keras.losses import LossFunctionWrapper
+from tensorflow.python.keras.utils import losses_utils
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input, Conv2D, Dropout
 from tensorflow.keras.layers import (Concatenate
@@ -389,35 +390,31 @@ def class_imbalance_loss(pos_weights, neg_weights, epsilon=1e-7):
         return K.mean(loss)
     return loss_f
 
-class ClassBalancedLoss(Loss):
-    def __init__(self
-                 , pos_weights
-                 , neg_weights
-                 , epsilon=1e-7
-                 , name='class_balanced_loss'):
-        super(ClassBalancedLoss, self).__init__(name=name)
-        self.pos_weights = pos_weights
-        self.neg_weights = neg_weights
-        self.epsilon = epsilon
 
-    #@tf.function
-    def call(self, y_true, y_pred):
+class ClassBalancedLoss(LossFunctionWrapper):
+    def __init__(self
+                 , pos_weights = 1.0
+                 , neg_weights = 0.0
+                 , epsilon=1e-7
+                 , reduction=losses_utils.ReductionV2.AUTO
+                 , name='class_balanced_loss'):
+        super(ClassBalancedLoss, self).__init__(class_balanced_loss
+            , pos_weights=pos_weights
+            , neg_weights=neg_weights
+            , epsilon=epsilon
+            , reduction=reduction
+            , name=name)
+
+
+def class_balanced_loss(y_true, y_pred, pos_weights=1.0, neg_weights=0.0, epsilon=1e-7):
         # initialize loss to zero
         loss = 0.0
 
-        for i in range(len(self.pos_weights)):
-            loss += -1.0 * (self.pos_weights[i] * y_true[..., i] * K.log(y_pred[..., i] + self.epsilon)
-                            + self.neg_weights[i] * (1.0 - y_true[..., i]) * K.log(
-                        1.0 - y_pred[..., i] + self.epsilon))
+        for i in range(len(pos_weights)):
+            loss += -1.0 * (pos_weights[i] * y_true[..., i] * K.log(y_pred[..., i] + epsilon)
+                            + neg_weights[i] * (1.0 - y_true[..., i]) * K.log(
+                        1.0 - y_pred[..., i] + epsilon))
         return K.mean(loss)
-
-    def get_config(self):
-        """Get configuration."""
-        config = {'pos_weights': self.pos_weights
-                  , 'neg_weights': self.neg_weights
-                  , 'epsilon': self.epsilon}
-        base_config = super(ClassBalancedLoss, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
 
 
 class SemanticSegmentation(object):
@@ -720,9 +717,9 @@ class SemanticSegmentation(object):
                           , epochs=self.hps['epochs']
                           , verbose=1
                           , max_queue_size=80
-                          , workers=4
+                          , workers=8
                           , use_multiprocessing=False
-                          , callbacks=[model_check_point, reduce_lr, tensorboard]
+                          , callbacks=[model_check_point, reduce_lr] #, tensorboard]
                           , validation_data=val_gen
                           , validation_freq=1)
         
