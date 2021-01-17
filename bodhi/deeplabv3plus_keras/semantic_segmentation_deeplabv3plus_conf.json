@@ -1,5 +1,5 @@
 {
-	"mode" : "train",
+	"mode" : "test",
 	"resource_type": "pascal_voc_2012_ext",
 	"resource_path" : "Z:\\maum\\workspace_resource\\deeplabv3plus_keras\\resource",
 	"model_loading" : true,
@@ -9,7 +9,10 @@
 	"eval_data_mode": 1,
 	"eval_result_saving": true,
 	"base_model": 0,
+	"max_queue_size": 80,
+	"workers": 0,
 	"hps" : {
+		"dtype": "float32",
 		"val_ratio": 0.1,
 		"lr" : 0.0001,
 		"beta_1" : 0.5,
@@ -25,7 +28,7 @@
 	"nn_arch" : {
 		"boundary_refinement": true,
 		"output_stride": 8,
-		"image_size": 256,
+		"image_size": 224,
 		"num_classes": 21,
 		"mv2_depth_multiplier": 1,
 		"depth_multiplier": 1,

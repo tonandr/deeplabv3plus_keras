@@ -138,6 +138,7 @@ def resize(image, size: tuple, mode='constant', device: int = DEVICE_CPU):
         # Resize.
         resized_image = ndimage.affine_transform(image
                                                  , M
+                                                 , order=1
                                                  , output_shape=output_shape
                                                  , mode=mode)
 
@@ -157,6 +158,7 @@ def resize(image, size: tuple, mode='constant', device: int = DEVICE_CPU):
         # Resize.
         resized_image = ndimage_gpu.affine_transform(image_gpu
                                                      , M_gpu
+                                                     , order=1
                                                      , output_shape=output_shape
                                                      , mode=mode)
 
@@ -305,7 +307,7 @@ class MeanIoUExt(MeanIoU):
             else self.total_cm.assign(current_cm)
 
 
-def get_one_hot(label, num_classes):
+def get_one_hot(label, num_classes): #?
     """Get one hot tensor.
 
     Parameters
@@ -406,6 +408,7 @@ class ClassBalancedLoss(LossFunctionWrapper):
             , name=name)
 
 
+@tf.autograph.experimental.do_not_convert
 def class_balanced_loss(y_true, y_pred, pos_weights=1.0, neg_weights=0.0, epsilon=1e-7):
         # initialize loss to zero
         loss = 0.0
@@ -421,8 +424,8 @@ class SemanticSegmentation(object):
     """Keras Semantic segmentation model of DeeplabV3+"""
     
     # Constants.
-    #MODEL_PATH = 'semantic_segmentation_deeplabv3plus'
-    MODEL_PATH = 'semantic_segmentation_deeplabv3plus.h5'
+    MODEL_PATH = 'semantic_segmentation_deeplabv3plus'
+    #MODEL_PATH = 'semantic_segmentation_deeplabv3plus.h5'
     TF_LITE_MODEL_PATH = 'semantic_segmentation_deeplabv3plus.tflite'
     #MODEL_PATH = 'semantic_segmentation_deeplabv3plus_is224_lr0_0001_ep344.h5'
 
@@ -453,15 +456,20 @@ class SemanticSegmentation(object):
             with CustomObjectScope({'ClassBalancedLoss': ClassBalancedLoss
                                     , 'MeanIoUExt': MeanIoUExt}):
                 self.model = load_model(os.path.join(self.resource_path, self.MODEL_PATH))
-                #self.model.compile(optimizer=opt,
-                #           , loss=CategoricalCrossentropyWithLabelGT(num_classes=self.nn_arch['num_classes'])
-                #           , metrics=[MeanIoUExt(num_classes=NUM_CLASSES)]
+                '''
+                self.model.compile(optimizer=opt
+                                   , loss=ClassBalancedLoss(ss_pw, ss_nw)
+                                   , metrics=[MeanIoUExt(num_classes=self.nn_arch['num_classes'])])
+                '''
         else:
             # Design the semantic segmentation model.
             # Load a base model.
             if self.conf['base_model'] == BASE_MODEL_MOBILENETV2:
                 # Load mobilenetv2 as the base model.
-                mv2 = MobileNetV2(include_top=False) #, depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+                mv2 = MobileNetV2(input_shape=(self.nn_arch['image_size']
+                                       , self.nn_arch['image_size']
+                                       , 3)
+                                    , include_top=False) #, depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
                 
                 if self.nn_arch['output_stride'] == 8:
                     self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block_5_add').output) # Layer satisfying output stride of 8.
@@ -474,7 +482,10 @@ class SemanticSegmentation(object):
                 self.base._init_set_name('base')
             elif self.conf['base_model'] == BASE_MODEL_XCEPTION:
                 # Load xception as the base model.
-                mv2 = Xception(include_top=False) #, depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+                mv2 = Xception(input_shape=(self.nn_arch['image_size']
+                                       , self.nn_arch['image_size']
+                                       , 3)
+                                    , include_top=False) #, depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
                 
                 if self.nn_arch['output_stride'] == 8:
                     self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block4_sepconv2_bn').output) # Layer satisfying output stride of 8.
@@ -501,7 +512,7 @@ class SemanticSegmentation(object):
             self.model.compile(optimizer=opt
                                , loss=ClassBalancedLoss(ss_pw, ss_nw)
                                , metrics=[MeanIoUExt(num_classes=self.nn_arch['num_classes'])])
-            self.model._init_set_name('deeplabv3plus_mnv2')
+            self.model._init_set_name('deeplabv3plus')
 
     def _make_encoder(self):
         """Make encoder."""
@@ -511,6 +522,7 @@ class SemanticSegmentation(object):
         input_image = Input(shape=(self.nn_arch['image_size']
                                        , self.nn_arch['image_size']
                                        , 3)
+                                       , dtype=self.hps['dtype']
                                        , name='input_image')
         
         # Extract feature.
@@ -595,7 +607,7 @@ class SemanticSegmentation(object):
         assert hasattr(self, 'base') and hasattr(self, 'encoder')
         
         inputs = self.encoder.outputs
-        features = Input(shape=K.int_shape(inputs[0])[1:])
+        features = Input(shape=K.int_shape(inputs[0])[1:], dtype=self.hps['dtype'])
  
         if self.nn_arch['boundary_refinement']:
             # Refine boundary.
@@ -716,8 +728,8 @@ class SemanticSegmentation(object):
                           , steps_per_epoch=self.hps['tr_step']                  
                           , epochs=self.hps['epochs']
                           , verbose=1
-                          , max_queue_size=80
-                          , workers=8
+                          , max_queue_size=self.conf['max_queue_size']
+                          , workers=self.conf['workers']
                           , use_multiprocessing=False
                           , callbacks=[model_check_point, reduce_lr] #, tensorboard]
                           , validation_data=val_gen
@@ -747,23 +759,15 @@ class SemanticSegmentation(object):
             else:
                 shutil.rmtree(os.path.join(self.resource_path, 'results'))
                 os.mkdir(os.path.join(self.resource_path, 'results'))
-        
-        
+
         if self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012: 
-            val_gen = self.TrainingSequencePascalVOC2012(self.resource_path
-                                                        , self.hps
-                                                        , self.nn_arch
+            val_gen = self.TrainingSequencePascalVOC2012(self.conf
                                                         , mode=MODE_VAL)
         elif self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012_EXT:
-            valGen = self.TrainingSequencePascalVOC2012Ext(self.resource_path
-                                                    , self.hps
-                                                    , self.nn_arch
-                                                    , val_ratio=self.hps['val_ratio']
+            valGen = self.TrainingSequencePascalVOC2012Ext(self.conf
                                                     , mode=MODE_VAL)
         elif self.conf['resource_type'] == RESOURCE_TYPE_GOOGLE_OPEN_IMAGES_V5:
-            val_gen = self.TrainingSequenceGoogleOpenImagesV5(self.resource_path
-                                                        , self.hps
-                                                        , self.nn_arch
+            val_gen = self.TrainingSequenceGoogleOpenImagesV5(self.conf
                                                         , mode=MODE_VAL)
         else:
             raise ValueError('resource type is not valid.')
@@ -772,8 +776,8 @@ class SemanticSegmentation(object):
         step = self.hps['val_step'] if mode == MODE_VAL else self.hps['tr_step']
         
         use_multiprocessing = False
-        max_queue_size = 80
-        workers = 4
+        max_queue_size = self.conf['max_queue_size']
+        workers = self.conf['workers']
         shuffle = False
                    
         # Check exception.
@@ -804,11 +808,7 @@ class SemanticSegmentation(object):
             pbar = tqdm(range(step))                                    
             for s_i in pbar: #?
                 images, labels = next(output_generator)
-
-                if self.conf['multi_gpu']:
-                    results = self.parallel_model.predict(images) #?
-                else:
-                    results = self.model.predict(images)
+                results = self.model.predict(images)
                                    
                 c_miou.update_state(labels, results)
                 pbar.set_description("Mean IOU: {}".format(c_miou.result().numpy()))
@@ -817,7 +817,7 @@ class SemanticSegmentation(object):
                 if result_saving:
                     results = np.argmax(results, axis=-1) * 255. / self.nn_arch['num_classes']
                     results = np.tile(np.expand_dims(results, axis=-1), (1, 1, 1, 3))
-                    labels = labels * 255. / self.nn_arch['num_classes']
+                    labels = np.argmax(labels, axis=-1) * 255. / self.nn_arch['num_classes']
                     labels = np.tile(np.expand_dims(labels, axis=-1), (1, 1, 1, 3)) 
                     
                     for b_i in range(self.hps['batch_size']):
@@ -828,8 +828,8 @@ class SemanticSegmentation(object):
                         overlay_result = cv.addWeighted(image, 0.5, result, 0.5, 0.)
                         final_result = np.concatenate([image, label, result, overlay_result], axis=1)
                         imsave(os.path.join(self.resource_path
-                                            , 'results'
-                                            , 'result_{0:d}.png'.format(s_i * self.hps['batch_size'] + b_i))
+                                , 'results'
+                                , 'result_{0:d}.png'.format(s_i * self.hps['batch_size'] + b_i))
                                 , final_result)
         finally:
             try:
@@ -852,20 +852,13 @@ class SemanticSegmentation(object):
             os.mkdir(os.path.join(self.resource_path, 'test_results'))
 
         if self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012: 
-            testGen = self.TrainingSequencePascalVOC2012(self.resource_path
-                                                    , self.hps
-                                                    , self.nn_arch
+            testGen = self.TrainingSequencePascalVOC2012(self.conf
                                                     , mode=MODE_TEST)
         elif self.conf['resource_type'] == RESOURCE_TYPE_PASCAL_VOC_2012_EXT:
-            testGen = self.TrainingSequencePascalVOC2012Ext(self.resource_path
-                                                    , self.hps
-                                                    , self.nn_arch
-                                                    , val_ratio=self.hps['val_ratio']
+            testGen = self.TrainingSequencePascalVOC2012Ext(self.conf
                                                     , mode=MODE_TEST)
         elif self.conf['resource_type'] == RESOURCE_TYPE_GOOGLE_OPEN_IMAGES_V5:
-            testGen = self.TrainingSequenceGoogleOpenImagesV5(self.resource_path
-                                                        , self.hps
-                                                        , self.nn_arch
+            testGen = self.TrainingSequenceGoogleOpenImagesV5(self.conf
                                                         , mode=MODE_TEST)
         else:
             raise ValueError('resource type is not valid.')
@@ -902,12 +895,8 @@ class SemanticSegmentation(object):
             
             pbar = tqdm(range(step))                                    
             for s_i in pbar: #?
-                images, labels, file_names = next(output_generator)
-
-                if self.conf['multi_gpu']:
-                    results = self.parallel_model.predict(images) #?
-                else:
-                    results = self.model.predict(images)
+                images, file_names = next(output_generator)
+                results = self.model.predict(images)
                                    
                 # Save result images.
                 results = np.argmax(results, axis=-1)
@@ -1083,7 +1072,6 @@ class SemanticSegmentation(object):
                     image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
                                                              
                     # Adjust the original image size into the normalized image size according to the ratio of width, height.
-                    # Adjust the original image size into the normalized image size according to the ratio of width, height.
                     image, w, h, pad_t, pad_l, pad_b, pad_r \
                         = resize_image_to_target_symmeric_size(image
                                                                , self.nn_arch['image_size']
@@ -1127,7 +1115,6 @@ class SemanticSegmentation(object):
                     image = 2.0 * (image / 255 - 0.5) # Normalization to (-1, 1).
                                                              
                     # Adjust the original image size into the normalized image size according to the ratio of width, height.
-                    # Adjust the original image size into the normalized image size according to the ratio of width, height.
                     image, w, h, pad_t, pad_l, pad_b, pad_r \
                         = resize_image_to_target_symmeric_size(image
                                                                , self.nn_arch['image_size']
@@ -1156,7 +1143,7 @@ class SemanticSegmentation(object):
                         labels.append(label) 
                                                                          
             return (np.asarray(images), np.asarray(labels)) \
-                    if self.mode != MODE_TEST else (np.asarray(images), np.asarray(labels), file_names) 
+                    if self.mode != MODE_TEST else (np.asarray(images), file_names)
 
     class TrainingSequencePascalVOC2012Ext(Sequence):
         """Training data set sequence extension for Pascal VOC 2012."""
@@ -1185,7 +1172,7 @@ class SemanticSegmentation(object):
                                        , 'ImageSets'
                                        , 'Segmentation'
                                        , 'train_aug_val.txt')) as f:
-                    self.file_names = f.readlines() #?
+                    self.file_names = f.readlines()[:] #?
             elif self.mode == MODE_TEST:
                 with open(os.path.join(self.resource_path
                                        , 'pascal-voc-2012-test'
@@ -1194,7 +1181,7 @@ class SemanticSegmentation(object):
                                        , 'ImageSets'
                                        , 'Segmentation'
                                        , 'test.txt')) as f:
-                    self.file_names = f.readlines() #?                
+                    self.file_names = f.readlines()[:100] #?
             else:
                 raise ValueError('The mode must be MODE_TRAIN or MODE_VAL.')
             
@@ -1345,7 +1332,7 @@ class SemanticSegmentation(object):
                         labels.append(label)
 
             return (np.asarray(images), np.asarray(labels)) \
-                    if self.mode != MODE_TEST else (np.asarray(images), np.asarray(labels), file_names) 
+                    if self.mode != MODE_TEST else (np.asarray(images), file_names)
 
     class TrainingSequencePascalVOC2012(Sequence):
         """Training data set sequence for Pascal VOC 2012."""
@@ -1534,7 +1521,7 @@ class SemanticSegmentation(object):
                         labels.append(label)
                                                                          
             return (np.asarray(images), np.asarray(labels)) \
-                    if self.mode != MODE_TEST else (np.asarray(images), np.asarray(labels), file_names) 
+                    if self.mode != MODE_TEST else (np.asarray(images), file_names)
                           
 def main():
     """Main."""
