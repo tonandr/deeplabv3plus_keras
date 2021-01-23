@@ -956,7 +956,7 @@ class SemanticSegmentation(object):
     class TrainingSequenceGoogleOpenImagesV5(Sequence):
         """Training data set sequence for google open images v5."""
                 
-        def __init__(self, conf, shuffle=True, mode=MODE_TRAIN):
+        def __init__(self, conf, mode=MODE_TRAIN):
             """
             Parameters
             ----------
@@ -970,7 +970,6 @@ class SemanticSegmentation(object):
             self.hps = self.conf['hps']
             self.nn_arch = self.conf['nn_arch']
             self.val_ratio = self.hps['val_ratio']
-            self.shuffle = shuffle
             self.mode = mode
 
             if self.mode == MODE_TRAIN:
@@ -1148,7 +1147,7 @@ class SemanticSegmentation(object):
     class TrainingSequencePascalVOC2012Ext(Sequence):
         """Training data set sequence extension for Pascal VOC 2012."""
                 
-        def __init__(self, conf, shuffle=True, mode=MODE_TRAIN):
+        def __init__(self, conf, mode=MODE_TRAIN):
             """
             Parameters
             ----------
@@ -1162,7 +1161,6 @@ class SemanticSegmentation(object):
             self.hps = self.conf['hps']
             self.nn_arch = self.conf['nn_arch']
             self.val_ratio = self.hps['val_ratio']
-            self.shuffle = shuffle
             self.mode = mode
 
             if self.mode == MODE_TRAIN or self.mode == MODE_VAL:
@@ -1188,10 +1186,7 @@ class SemanticSegmentation(object):
             # Remove \n.
             for i in range(len(self.file_names)):
                 self.file_names[i] = self.file_names[i][:-1]
-            
-            if self.shuffle:
-                random.shuffle(self.file_names)
-            
+
             if self.mode == MODE_TRAIN:
                 self.file_names = self.file_names[:int(len(self.file_names) * (1. - self.val_ratio))]    
                 self.total_samples = len(self.file_names)
@@ -1337,7 +1332,7 @@ class SemanticSegmentation(object):
     class TrainingSequencePascalVOC2012(Sequence):
         """Training data set sequence for Pascal VOC 2012."""
                 
-        def __init__(self, conf, shuffle=True, mode=MODE_TRAIN):
+        def __init__(self, conf, mode=MODE_TRAIN):
             """
             Parameters
             ----------
@@ -1351,7 +1346,6 @@ class SemanticSegmentation(object):
             self.hps = self.conf['hps']
             self.nn_arch = self.conf['nn_arch']
             self.val_ratio = self.hps['val_ratio']
-            self.shuffle = shuffle
             self.mode = mode
             
             if self.mode == MODE_TRAIN:
