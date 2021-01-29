@@ -1,14 +1,14 @@
 {
-	"mode" : "test",
+	"mode" : "train",
 	"resource_type": "pascal_voc_2012_ext",
 	"resource_path" : "Z:\\maum\\workspace_resource\\deeplabv3plus_keras\\resource",
-	"model_loading" : true,
+	"model_loading" : false,
 	"multi_gpu" : false,
 	"num_gpus" : 4,
 	"prepro_device": 0,
 	"eval_data_mode": 1,
 	"eval_result_saving": true,
-	"base_model": 0,
+	"base_model": "efficientnetb0",
 	"max_queue_size": 80,
 	"workers": 0,
 	"hps" : {
@@ -27,7 +27,7 @@
 	},
 	"nn_arch" : {
 		"boundary_refinement": true,
-		"output_stride": 8,
+		"output_stride": 16,
 		"image_size": 224,
 		"num_classes": 21,
 		"mv2_depth_multiplier": 1,

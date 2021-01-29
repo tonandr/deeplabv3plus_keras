@@ -37,6 +37,7 @@ import numpy as np
 import cv2 as cv
 from skimage.io import imread, imsave
 import matplotlib.pyplot as plt
+from tensorflow.python.keras.applications.efficientnet import EfficientNetB0
 from tqdm import tqdm
 import pandas as pd
 from scipy import ndimage
@@ -81,8 +82,9 @@ MODE_TRAIN = 0
 MODE_VAL = 1
 MODE_TEST = 2
 
-BASE_MODEL_MOBILENETV2 = 0
-BASE_MODEL_XCEPTION = 1
+BASE_MODEL_MOBILENETV2 = 'mobilenetv2'
+BASE_MODEL_XCEPTION = 'xception'
+BASE_MODEL_EFFICIENTNETB0 = 'efficientnetb0'
 
 RESOURCE_TYPE_PASCAL_VOC_2012 = 'pascal_voc_2012'
 RESOURCE_TYPE_PASCAL_VOC_2012_EXT = 'pascal_voc_2012_ext'
@@ -482,22 +484,38 @@ class SemanticSegmentation(object):
                 self.base._init_set_name('base')
             elif self.conf['base_model'] == BASE_MODEL_XCEPTION:
                 # Load xception as the base model.
-                mv2 = Xception(input_shape=(self.nn_arch['image_size']
+                xception = Xception(input_shape=(self.nn_arch['image_size']
                                        , self.nn_arch['image_size']
                                        , 3)
                                     , include_top=False) #, depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
                 
                 if self.nn_arch['output_stride'] == 8:
-                    self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block4_sepconv2_bn').output) # Layer satisfying output stride of 8.
+                    self.base = Model(inputs=xception.inputs, outputs=xception.get_layer('block4_sepconv2_bn').output) # Layer satisfying output stride of 8.
                 else:
-                    self.base = Model(inputs=mv2.inputs, outputs=mv2.get_layer('block13_sepconv2_bn').output) # Layer satisfying output stride of 16.
+                    self.base = Model(inputs=xception.inputs, outputs=xception.get_layer('block13_sepconv2_bn').output) # Layer satisfying output stride of 16.
                 
                 self.base.trainable = True
                 for layer in self.base.layers: layer.trainable = True #?
                 
-                self.base._init_set_name('base') 
-            
-            # Make the encoder-decoder model.
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_EFFICIENTNETB0:
+                # Load efficientnetb0 as the base model.
+                effnetb0 = EfficientNetB0(input_shape=(self.nn_arch['image_size']
+                                            , self.nn_arch['image_size']
+                                            , 3)
+                               , include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=effnetb0.inputs, outputs=effnetb0.get_layer('block3b_add').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=effnetb0.inputs, outputs=effnetb0.get_layer('block5c_add').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+
+                # Make the encoder-decoder model.
             self._make_encoder()
             self._make_decoder()
             
