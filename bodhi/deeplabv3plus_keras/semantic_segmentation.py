@@ -37,7 +37,14 @@ import numpy as np
 import cv2 as cv
 from skimage.io import imread, imsave
 import matplotlib.pyplot as plt
-from tensorflow.python.keras.applications.efficientnet import EfficientNetB0
+from tensorflow.python.keras.applications.efficientnet import (EfficientNetB0
+    , EfficientNetB1
+    , EfficientNetB2
+    , EfficientNetB3
+    , EfficientNetB4
+    , EfficientNetB5
+    , EfficientNetB6
+    , EfficientNetB7)
 from tqdm import tqdm
 import pandas as pd
 from scipy import ndimage
@@ -85,6 +92,13 @@ MODE_TEST = 2
 BASE_MODEL_MOBILENETV2 = 'mobilenetv2'
 BASE_MODEL_XCEPTION = 'xception'
 BASE_MODEL_EFFICIENTNETB0 = 'efficientnetb0'
+BASE_MODEL_EFFICIENTNETB1 = 'efficientnetb1'
+BASE_MODEL_EFFICIENTNETB2 = 'efficientnetb2'
+BASE_MODEL_EFFICIENTNETB3 = 'efficientnetb3'
+BASE_MODEL_EFFICIENTNETB4 = 'efficientnetb4'
+BASE_MODEL_EFFICIENTNETB5 = 'efficientnetb5'
+BASE_MODEL_EFFICIENTNETB6 = 'efficientnetb6'
+BASE_MODEL_EFFICIENTNETB7 = 'efficientnetb7'
 
 RESOURCE_TYPE_PASCAL_VOC_2012 = 'pascal_voc_2012'
 RESOURCE_TYPE_PASCAL_VOC_2012_EXT = 'pascal_voc_2012_ext'
@@ -514,6 +528,141 @@ class SemanticSegmentation(object):
                 for layer in self.base.layers: layer.trainable = True  # ?
 
                 self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_EFFICIENTNETB1:
+                # Load efficientnetb1 as the base model.
+                effnetb1 = EfficientNetB1(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=effnetb1.inputs, outputs=effnetb1.get_layer(
+                        'block3c_add').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=effnetb1.inputs, outputs=effnetb1.get_layer(
+                        'block5d_add').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_EFFICIENTNETB2:
+                # Load efficientnetb2 as the base model.
+                effnetb2 = EfficientNetB2(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=effnetb2.inputs, outputs=effnetb2.get_layer(
+                        'block3c_add').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=effnetb2.inputs, outputs=effnetb2.get_layer(
+                        'block5d_add').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_EFFICIENTNETB3:
+                # Load efficientnetb3 as the base model.
+                effnetb3 = EfficientNetB3(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=effnetb3.inputs, outputs=effnetb3.get_layer(
+                        'block3c_add').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=effnetb3.inputs, outputs=effnetb3.get_layer(
+                        'block5e_add').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_EFFICIENTNETB4:
+                # Load efficientnetb4 as the base model.
+                effnetb4 = EfficientNetB4(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=effnetb4.inputs, outputs=effnetb4.get_layer(
+                        'block3d_add').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=effnetb4.inputs, outputs=effnetb4.get_layer(
+                        'block5f_add').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_EFFICIENTNETB5:
+                # Load efficientnetb5 as the base model.
+                effnetb5 = EfficientNetB5(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=effnetb5.inputs, outputs=effnetb5.get_layer(
+                        'block3e_add').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=effnetb5.inputs, outputs=effnetb5.get_layer(
+                        'block5g_add').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_EFFICIENTNETB6:
+                # Load efficientnetb6 as the base model.
+                effnetb6 = EfficientNetB6(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=effnetb6.inputs, outputs=effnetb6.get_layer(
+                        'block3f_add').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=effnetb6.inputs, outputs=effnetb6.get_layer(
+                        'block5h_add').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_EFFICIENTNETB7:
+                # Load efficientnetb7 as the base model.
+                effnetb7 = EfficientNetB7(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=effnetb7.inputs, outputs=effnetb7.get_layer(
+                        'block3g_add').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=effnetb7.inputs, outputs=effnetb7.get_layer(
+                        'block5j_add').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            else:
+                raise ValueError('base model is not valid.')
 
                 # Make the encoder-decoder model.
             self._make_encoder()
