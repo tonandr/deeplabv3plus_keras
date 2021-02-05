@@ -37,14 +37,6 @@ import numpy as np
 import cv2 as cv
 from skimage.io import imread, imsave
 import matplotlib.pyplot as plt
-from tensorflow.python.keras.applications.efficientnet import (EfficientNetB0
-    , EfficientNetB1
-    , EfficientNetB2
-    , EfficientNetB3
-    , EfficientNetB4
-    , EfficientNetB5
-    , EfficientNetB6
-    , EfficientNetB7)
 from tqdm import tqdm
 import pandas as pd
 from scipy import ndimage
@@ -64,7 +56,21 @@ from tensorflow.keras.layers import (Concatenate
     , AveragePooling2D
     , SeparableConv2D)
 from tensorflow.keras import optimizers
-from tensorflow.keras.applications import MobileNetV2, Xception
+from tensorflow.keras.applications import (MobileNetV2
+    , Xception
+    , NASNetMobile
+    , NASNetLarge
+    , DenseNet121
+    , DenseNet169
+    , DenseNet201)
+from tensorflow.python.keras.applications.efficientnet import (EfficientNetB0
+    , EfficientNetB1
+    , EfficientNetB2
+    , EfficientNetB3
+    , EfficientNetB4
+    , EfficientNetB5
+    , EfficientNetB6
+    , EfficientNetB7)
 from tensorflow.keras.utils import Sequence, GeneratorEnqueuer, OrderedEnqueuer
 from tensorflow.keras.callbacks import ReduceLROnPlateau, ModelCheckpoint, LearningRateScheduler
 from tensorflow.keras.utils import CustomObjectScope
@@ -99,6 +105,11 @@ BASE_MODEL_EFFICIENTNETB4 = 'efficientnetb4'
 BASE_MODEL_EFFICIENTNETB5 = 'efficientnetb5'
 BASE_MODEL_EFFICIENTNETB6 = 'efficientnetb6'
 BASE_MODEL_EFFICIENTNETB7 = 'efficientnetb7'
+BASE_MODEL_NASNETMOBILE = "nasnetmobile"
+BASE_MODEL_NASNETLARGE = "nasnetlarge"
+BASE_MODEL_DENSENET121 = 'densenet121'
+BASE_MODEL_DENSENET169 = 'densenet169'
+BASE_MODEL_DENSENET201 = 'densenet201'
 
 RESOURCE_TYPE_PASCAL_VOC_2012 = 'pascal_voc_2012'
 RESOURCE_TYPE_PASCAL_VOC_2012_EXT = 'pascal_voc_2012_ext'
@@ -656,6 +667,101 @@ class SemanticSegmentation(object):
                 else:
                     self.base = Model(inputs=effnetb7.inputs, outputs=effnetb7.get_layer(
                         'block5j_add').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_NASNETMOBILE:
+                # Load nasnetmobile as the base model.
+                nasnetmobile = NASNetMobile(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=nasnetmobile.inputs, outputs=nasnetmobile.get_layer(
+                        'activation_73').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=nasnetmobile.inputs, outputs=nasnetmobile.get_layer(
+                        'activation_132').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_NASNETLARGE: # Is it valid?
+                # Load nasnetlarge as the base model.
+                nasnetlarge = NASNetLarge(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=nasnetlarge.inputs, outputs=nasnetlarge.get_layer(
+                        'activation_97').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=nasnetlarge.inputs, outputs=nasnetlarge.get_layer(
+                        'activation_180').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_DENSENET121:
+                # Load densenet121 as the base model.
+                densenet121 = DenseNet121(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=densenet121.inputs, outputs=densenet121.get_layer(
+                        'pool3_conv').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=densenet121.inputs, outputs=densenet121.get_layer(
+                        'pool4_conv').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_DENSENET169:
+                # Load densenet169 as the base model.
+                densenet169 = DenseNet169(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=densenet169.inputs, outputs=densenet169.get_layer(
+                        'pool3_conv').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=densenet169.inputs, outputs=densenet169.get_layer(
+                        'pool4_conv').output)  # Layer satisfying output stride of 16.
+
+                self.base.trainable = True
+                for layer in self.base.layers: layer.trainable = True  # ?
+
+                self.base._init_set_name('base')
+            elif self.conf['base_model'] == BASE_MODEL_DENSENET201:
+                # Load densenet201 as the base model.
+                densenet201 = DenseNet201(input_shape=(self.nn_arch['image_size']
+                                                       , self.nn_arch['image_size']
+                                                       , 3)
+                                          ,
+                                          include_top=False)  # , depth_multiplier=self.nn_arch['mv2_depth_multiplier'])
+
+                if self.nn_arch['output_stride'] == 8:
+                    self.base = Model(inputs=densenet201.inputs, outputs=densenet201.get_layer(
+                        'pool3_conv').output)  # Layer satisfying output stride of 8.
+                else:
+                    self.base = Model(inputs=densenet201.inputs, outputs=densenet201.get_layer(
+                        'pool4_conv').output)  # Layer satisfying output stride of 16.
 
                 self.base.trainable = True
                 for layer in self.base.layers: layer.trainable = True  # ?

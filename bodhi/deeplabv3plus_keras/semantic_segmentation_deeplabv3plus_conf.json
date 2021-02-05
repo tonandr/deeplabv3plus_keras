@@ -8,7 +8,7 @@
 	"prepro_device": 0,
 	"eval_data_mode": 1,
 	"eval_result_saving": true,
-	"base_model": "efficientnetb1",
+	"base_model": "densenet121",
 	"max_queue_size": 80,
 	"workers": 0,
 	"hps" : {
