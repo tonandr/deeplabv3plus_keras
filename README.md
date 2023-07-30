@@ -7,8 +7,8 @@ The deeplabV3+ semantic segmentation model is mainly composed of the encoder and
 
 - [x] The Keras framework is changed into the tensorflow 2.4 Keras framework.
 - [x] The class balanced loss is applied.
-- [ ] Test and optimize the model.
-- [ ] Documentation.
+
+This project is closed.
 
 # Requirement
 
